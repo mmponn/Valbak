@@ -141,7 +141,7 @@ fn get_settings_path() -> Result<PathBuf, SettingsError> {
     }
 }
 
-fn default_settings() -> Result<Settings, SettingsError> {
+pub fn default_settings() -> Result<Settings, SettingsError> {
     let (backup_paths, redirect_paths) = match dirs::data_local_dir() {
         None => {
             (vec!(), vec!())

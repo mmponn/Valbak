@@ -5,42 +5,69 @@
 // use crate::settings::{Backup, RedirectPath, Settings};
 
 use std::process::exit;
+use fltk::app;
 use fltk::app::App;
 use fltk::dialog::{alert_default, message_default};
 use fltk::prelude::{WidgetExt, WindowExt};
-use crate::settings::{get_settings, SettingsError};
+use Message::{Bar, Foo};
+use crate::main_win::connect_widgets;
+use crate::settings::{default_settings, get_settings, SettingsError};
 
 mod settings;
 mod main_win;
 mod settings_win;
+mod win;
+
+pub enum Message {
+    Foo,
+    Bar
+}
 
 fn main() {
+    let app = App::default();
+    let (sender, receiver) = app::channel::<Message>();
+
     let mut main_win = main_win::make_main_window();
-    main_win.show();
+    main_win.wind.show();
+
+    main_win::connect_widgets(&main_win, &sender);
+
+    let mut settings_win;
 
     match get_settings() {
-        Ok(_) =>
-            (),
+        Ok(settings) => {
+            settings_win = settings_win::make_settings_window(settings);
+            settings_win.wind.make_modal(true);
+        },
         Err(SettingsError::SError(msg)) => {
             let msg = msg + "\nFatal error - Valbak must close";
             alert_default(&msg);
             exit(1);
         },
         Err(SettingsError::SWarning(Some(settings), msg)) => {
-            let mut settings_win = settings_win::make_settings_window(settings);
-            settings_win.make_modal(true);
-            settings_win.show();
+            settings_win = settings_win::make_settings_window(settings);
+            settings_win.wind.make_modal(true);
+            settings_win.wind.show();
             message_default(&msg);
         },
         Err(SettingsError::SNotFound(Some(settings))) => {
-            let mut settings_win = settings_win::make_settings_window(settings);
-            settings_win.make_modal(true);
-            settings_win.show();
+            settings_win = settings_win::make_settings_window(settings);
+            settings_win.wind.make_modal(true);
+            settings_win.wind.show();
         }
         _ =>
             panic!("illegal state")
     }
 
-    let app = App::default();
-    app.run().unwrap();
+    settings_win::connect_widgets(&settings_win, &sender);
+
+    while app.wait() {
+        if let Some(msg) = receiver.recv() {
+            match msg {
+                Foo => {}
+                Bar => {}
+            }
+        }
+
+    }
 }
