@@ -1,20 +1,13 @@
 use std::cmp::max;
+use std::process::exit;
 
-use fltk::{
-    app::*,
-    browser::*,
-    button::*,
-    enums::*,
-    group::*,
-    input::*,
-    prelude::*,
-    window::*
-};
+use fltk::{app::*, app, browser::*, button::*, enums::*, group::*, input::*, prelude::*, window::*};
 use fltk::frame::Frame;
 use fltk::menu::{MenuBar, MenuFlag};
 use fltk::misc::Tooltip;
 
-use crate::{Message, win};
+use crate::{Message, win_common};
+use crate::Message::{MenuAbout, MenuDocumentation, MenuQuit, MenuSettings};
 
 pub struct MainWindow {
     pub wind: DoubleWindow,
@@ -27,7 +20,7 @@ pub struct MainWindow {
     pub deactivate_redirect_button: Button,
 }
 
-pub fn make_main_window() -> MainWindow {
+pub fn make_main_window(sender: Sender<Message>) -> MainWindow {
     static WINDOW_SIZE: (i32, i32) = (800, 665);
     static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
@@ -38,10 +31,10 @@ pub fn make_main_window() -> MainWindow {
         .with_label("Menu");
     let text_size = menu.measure_label();
     menu.set_size(WINDOW_SIZE.0, text_size.1 + 10);
-    menu.add("File/Settings", Shortcut::None, MenuFlag::Normal, |_menu_bar| println!("Callback!"));
-    menu.add("File/Quit", Shortcut::None, MenuFlag::Normal, |_menu_bar| println!("Callback!"));
-    menu.add("Help/Documentation", Shortcut::None, MenuFlag::Normal, |_menu_bar| println!("Callback!"));
-    menu.add("Help/About", Shortcut::None, MenuFlag::Normal, |_menu_bar| println!("Callback!"));
+    menu.add("File/Settings", Shortcut::None, MenuFlag::Normal, move |_menu_bar| sender.send(MenuSettings));
+    menu.add("File/Quit", Shortcut::None, MenuFlag::Normal, move |_menu_bar| sender.send(MenuQuit));
+    menu.add("Help/Documentation", Shortcut::None, MenuFlag::Normal, move |_menu_bar| sender.send(MenuDocumentation));
+    menu.add("Help/About", Shortcut::None, MenuFlag::Normal, move |_menu_bar| sender.send(MenuAbout));
 
     let mut live_files;
     let mut backed_up_files;
@@ -56,9 +49,9 @@ pub fn make_main_window() -> MainWindow {
     let file_header_texts: Vec<&str> = vec!("File", "File Date", "File Size");
 
     // Live Files
-    win::make_section_header("Live Files", true);
-    win::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
-    live_files = win::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 100);
+    win_common::make_section_header("Live Files", true);
+    win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
+    live_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 100);
 
     live_files.add("File #1|2021-10-17 12:22pm|102kb");
     live_files.add("File #2|2021-10-15 2:22pm|233kb");
@@ -67,9 +60,9 @@ pub fn make_main_window() -> MainWindow {
     live_files.set_selection_color(Color::White);
 
     // Backed-Up Files
-    win::make_section_header("Backed-Up Files", true);
-    win::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
-    backed_up_files = win::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 200);
+    win_common::make_section_header("Backed-Up Files", true);
+    win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
+    backed_up_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 200);
 
     backed_up_files.add("File #1|2021-10-17 12:22pm|102kb");
     backed_up_files.add("File #2|2021-10-15 2:22pm|233kb");
@@ -88,6 +81,11 @@ pub fn make_main_window() -> MainWindow {
     let text_size = delete_backups_button.measure_label();
     delete_backups_button.set_size(text_size.0 + 15, text_size.1 + 10);
 
+   restore_backups_button
+        .emit(sender, Message::RestoreBackup);
+   delete_backups_button
+        .emit(sender, Message::DeleteBackup);
+
     backed_up_files_buttons.set_size(0, text_size.1 + 10);
 
     backed_up_files_buttons.end();
@@ -96,9 +94,9 @@ pub fn make_main_window() -> MainWindow {
     static REDIRECT_COLUMN_WIDTHS: [i32; 3] = [(CONTENT_SIZE.0 - 50) / 2, (CONTENT_SIZE.0 - 50) / 2, 50];
     let redirect_header_texts = vec!("Source Directory", "Destination Directory", "Active");
 
-    win::make_section_header("Redirects", true);
-    win::column_headers(&redirect_header_texts, &REDIRECT_COLUMN_WIDTHS);
-    redirect_list = win::make_list_browser(&REDIRECT_COLUMN_WIDTHS, 100);
+    win_common::make_section_header("Redirects", true);
+    win_common::column_headers(&redirect_header_texts, &REDIRECT_COLUMN_WIDTHS);
+    redirect_list = win_common::make_list_browser(&REDIRECT_COLUMN_WIDTHS, 100);
 
     let mut redirect_list_buttons = Pack::default()
         .with_type(PackType::Horizontal);
@@ -113,6 +111,9 @@ pub fn make_main_window() -> MainWindow {
     let text_size = deactivate_redirect_button.measure_label();
     deactivate_redirect_button.set_size(text_size.0 + 15, text_size.1 + 10);
 
+    activate_redirect_button.emit(sender, Message::ActivateRedirect);
+    deactivate_redirect_button.emit(sender, Message::DeactivateRedirect);
+
     redirect_list_buttons.set_size(0, text_size.1 + 10);
 
     redirect_list_buttons.end();
@@ -120,6 +121,13 @@ pub fn make_main_window() -> MainWindow {
     content.end();
 
     wind.end();
+
+    wind.set_callback(|_wind| {
+        if app::event() == Event::Close {
+            app::quit();
+            exit(0);
+        }
+    });
 
     MainWindow {
         wind,
@@ -133,6 +141,5 @@ pub fn make_main_window() -> MainWindow {
     }
 }
 
-pub fn connect_widgets(main_win: &MainWindow, sender: &Sender<Message>) {
-    todo!()
+impl MainWindow {
 }

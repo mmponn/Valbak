@@ -2,10 +2,12 @@ use std::fmt::{Display, Formatter};
 use std::fs;
 use std::io::ErrorKind::NotFound;
 use std::path::{Path, PathBuf};
-use thiserror::Error;
+
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize};
-use crate::settings::SettingsError::{SWarning, SError, SNotFound};
+use thiserror::Error;
+
+use crate::settings::SettingsError::{SError, SNotFound, SWarning};
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Settings {
@@ -41,7 +43,7 @@ impl Display for SettingsError {
 }
 
 pub fn get_settings() -> Result<Settings, SettingsError> {
-    match read_settings() {
+    let settings = match read_settings() {
         Err(SettingsError::SNotFound(None)) => {
             let settings = write_settings(default_settings()?)?;
             Err(SNotFound(Some(settings)))
@@ -49,8 +51,10 @@ pub fn get_settings() -> Result<Settings, SettingsError> {
         Err(err) =>
             Err(err),
         Ok(settings) =>
-            Ok(settings),
-    }
+            Ok(settings)
+    }?;
+
+    validate_settings(settings)
 }
 
 fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> {

@@ -1,16 +1,18 @@
+use fltk::app;
 use fltk::app::Sender;
 use fltk::browser::MultiBrowser;
 use fltk::button::Button;
-use fltk::enums::{Align, FrameType};
+use fltk::enums::{Align, Event, FrameType};
 use fltk::frame::Frame;
 use fltk::group::{Group, Pack, PackType};
 use fltk::prelude::{BrowserExt, GroupExt, WidgetBase, WidgetExt};
 use fltk::widget::Widget;
 use fltk::window::Window;
-use crate::Message;
 
+use crate::Message;
+use crate::Message::SettingsOk;
 use crate::settings::Settings;
-use crate::win::{column_headers, make_list_browser, make_section_header};
+use crate::win_common::{column_headers, make_list_browser, make_section_header};
 
 pub struct SettingsWindow {
     pub wind: Window,
@@ -25,7 +27,7 @@ pub struct SettingsWindow {
     pub ok_button: Button,
 }
 
-pub fn make_settings_window(settings: Settings) -> SettingsWindow {
+pub fn make_settings_window(sender: Sender<Message>) -> SettingsWindow {
     static WINDOW_SIZE: (i32, i32) = (800, 440);
     static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
@@ -113,10 +115,18 @@ pub fn make_settings_window(settings: Settings) -> SettingsWindow {
     ok_button.set_size(text_size.0 + 50, text_size.1 + 14);
     ok_button.set_pos(CONTENT_SIZE.0 - ok_button.width() - 5, 0);
 
+    ok_button.emit(sender, SettingsOk);
+
     ok_button_group.set_size(CONTENT_SIZE.0, ok_button.height());
     ok_button_group.add(&ok_button);
 
     wind.end();
+
+    wind.set_callback(|_wind| {
+        if app::event() == Event::Close {
+            // Disables Escape key closes window behavior
+        }
+    });
 
     SettingsWindow {
         wind,
@@ -132,6 +142,9 @@ pub fn make_settings_window(settings: Settings) -> SettingsWindow {
     }
 }
 
-pub fn connect_widgets(settings_win: &SettingsWindow, sender: &Sender<Message>) {
-    todo!()
+impl SettingsWindow {
+    pub fn connect_widgets(&mut self, sender: &Sender<Message>) {
+        self.new_backup_button
+            .set_callback(|button| println!("new"));
+    }
 }
