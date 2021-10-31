@@ -9,30 +9,32 @@ use thiserror::Error;
 
 use crate::settings::SettingsError::{SError, SNotFound, SWarning};
 
-#[derive(Deserialize, Serialize, Debug)]
+pub const SETTINGS_VERSION: &str = "1";
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Settings {
     pub settings_version: String,
-    pub backup_paths: Vec<Backup>,
-    pub redirect_paths: Vec<RedirectPath>
+    pub backup_paths: Vec<BackupFilePattern>,
+    pub backup_dest_path: PathBuf,
+    pub redirect_folders: Vec<RedirectFolder>
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-pub struct Backup {
-    pub source_dir: String,
-    pub dest_dir: String,
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct BackupFilePattern {
+    pub source_dir: PathBuf,
     pub file_pattern: String
 }
 
-#[derive(Deserialize, Serialize, Debug)]
-pub struct RedirectPath {
-    pub from_dir: String,
-    pub to_dir: String
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct RedirectFolder {
+    pub from_dir: PathBuf,
+    pub to_dir: PathBuf
 }
 
 #[derive(Error, Debug)]
 pub enum SettingsError {
     SNotFound(Option<Settings>),
-    SWarning(Option<Settings>, String),
+    SWarning(Settings, String),
     SError(String)
 }
 
@@ -45,7 +47,7 @@ impl Display for SettingsError {
 pub fn get_settings() -> Result<Settings, SettingsError> {
     let settings = match read_settings() {
         Err(SettingsError::SNotFound(None)) => {
-            let settings = write_settings(default_settings()?)?;
+            let settings = write_settings(get_default_settings()?)?;
             Err(SNotFound(Some(settings)))
         },
         Err(err) =>
@@ -57,34 +59,43 @@ pub fn get_settings() -> Result<Settings, SettingsError> {
     validate_settings(settings)
 }
 
-fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> {
-    let mut err = None;
+pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> {
+    let mut err = Ok(());
     for backup in settings.backup_paths.iter() {
-        if !backup.source_dir.is_empty() && !Path::new(&backup.source_dir).is_dir() {
-            err = Some(SWarning(None, format!("Folder does not exist: {}", backup.source_dir)));
-            break;
-        }
-        if !backup.dest_dir.is_empty() && !Path::new(&backup.dest_dir).is_dir() {
-            err = Some(SWarning(None, format!("Folder does not exist: {}", backup.dest_dir)));
+        if !backup.source_dir.is_dir() {
+            err = Err(
+                format!("Backup folder does not exist: {}", backup.source_dir.to_str().unwrap()));
             break;
         }
     }
-   if let Some(SWarning(None, msg)) = err {
-        return Err(SWarning(Some(settings), msg));
-   }
+    if let Err(err_msg) = err {
+        return Err(SWarning(settings, err_msg));
+    }
 
-    for redirect in settings.redirect_paths.iter() {
-        if !redirect.from_dir.is_empty() && !Path::new(&redirect.from_dir).is_dir() {
-            err = Some(SWarning(None, format!("Folder does not exist: {}", redirect.to_dir)));
+    if !settings.backup_paths.is_empty() && settings.backup_dest_path == PathBuf::new() {
+        let err_msg = "Missing destination folder".to_string();
+        return Err(SWarning(settings, err_msg));
+    }
+    if settings.backup_dest_path != PathBuf::new() && !settings.backup_dest_path.is_dir() {
+        let err_msg =
+            format!("Destination folder does not exist: {}", settings.backup_dest_path.to_str().unwrap());
+        return Err(SWarning(settings, err_msg));
+    }
+
+    for redirect in settings.redirect_folders.iter() {
+        if !redirect.from_dir.is_dir() {
+            err = Err(
+                format!("Redirect folder does not exist: {}", redirect.to_dir.to_str().unwrap()));
             break;
         }
-        if !redirect.to_dir.is_empty() && !Path::new(&redirect.to_dir).is_dir() {
-            err = Some(SWarning(None, format!("Folder does not exist: {}", redirect.to_dir)));
+        if !redirect.to_dir.is_dir() {
+            err = Err(
+                format!("Redirect-to folder does not exist: {}", redirect.to_dir.to_str().unwrap()));
             break;
         }
     }
-    if let Some(SWarning(None, msg)) = err {
-        return Err(SWarning(Some(settings), msg));
+    if let Err(err_msg) = err {
+        return Err(SWarning(settings, err_msg));
     }
 
     Ok(settings)
@@ -97,9 +108,7 @@ fn read_settings() -> Result<Settings, SettingsError> {
         Err(err) if err.kind() == NotFound =>
             return Err(SNotFound(None)),
         Err(err) =>
-            return Err(SWarning(
-                None,
-                format!("Failed to read settings file: {}", err))),
+            return Err(SError(format!("Failed to read settings file: {}", err))),
         Ok(str) =>
             str
     };
@@ -113,7 +122,7 @@ fn read_settings() -> Result<Settings, SettingsError> {
     Ok(settings)
 }
 
-fn write_settings(settings: Settings) -> Result<Settings, SettingsError> {
+pub fn write_settings(settings: Settings) -> Result<Settings, SettingsError> {
     let settings_path = get_settings_path()?;
 
     let settings_str = match serde_json::to_string(&settings) {
@@ -123,9 +132,7 @@ fn write_settings(settings: Settings) -> Result<Settings, SettingsError> {
 
     match fs::write(settings_path, settings_str.as_bytes()) {
         Err(err) =>
-            Err(SWarning(
-                Some(settings),
-                format!("Failed to write settings file: {}", err))),
+            Err(SWarning( settings, format!("Failed to write settings file: {}", err))),
         Ok(()) =>
             Ok(settings)
     }
@@ -145,64 +152,54 @@ fn get_settings_path() -> Result<PathBuf, SettingsError> {
     }
 }
 
-pub fn default_settings() -> Result<Settings, SettingsError> {
+pub fn get_default_settings() -> Result<Settings, SettingsError> {
+    let mut backup_dest_dir = PathBuf::new();
+
     let (backup_paths, redirect_paths) = match dirs::data_local_dir() {
         None => {
-            (vec!(), vec!())
+            (vec![], vec![])
         }
         Some(local_dir) => {
             let mut local_low_dir = local_dir.to_str().unwrap().to_string();
             local_low_dir.push_str("Low");
 
-            let valheim_dir = Path::new(&local_low_dir)
+            let valheim_src_dir = Path::new(&local_low_dir)
                 .join("IronGate")
                 .join("Valheim");
-            let worlds_src_dir = valheim_dir.join("worlds");
-            let characters_src_dir = valheim_dir.join("characters");
+            let worlds_src_dir = valheim_src_dir.join("worlds");
+            let characters_src_dir = valheim_src_dir.join("characters");
 
-            let mut dest_dir = match dirs::document_dir() {
+            backup_dest_dir = match dirs::document_dir() {
                 None => PathBuf::from(""),
                 Some(doc_dir) => doc_dir
             };
-            dest_dir.push("Valbak");
-            let worlds_dest_dir = dest_dir.join("worlds");
-            let characters_dest_dir = dest_dir.join("characters");
+            backup_dest_dir.push("Valbak");
 
             (
-                vec!(
-                    Backup {
-                        source_dir: worlds_src_dir.to_str().unwrap().to_string(),
-                        dest_dir: worlds_dest_dir.to_str().unwrap().to_string(),
+                vec![
+                    BackupFilePattern {
+                        source_dir: worlds_src_dir.clone(),
+                        // dest_dir: worlds_dest_dir.to_str().unwrap().to_string(),
                         file_pattern: "*.db".to_string()
                     },
-                    Backup {
-                        source_dir: worlds_src_dir.to_str().unwrap().to_string(),
-                        dest_dir: worlds_dest_dir.to_str().unwrap().to_string(),
+                    BackupFilePattern {
+                        source_dir: worlds_src_dir.clone(),
                         file_pattern: "*.fwl".to_string()
                     },
-                    Backup {
-                        source_dir: characters_src_dir.to_str().unwrap().to_string(),
-                        dest_dir: characters_dest_dir.to_str().unwrap().to_string(),
+                    BackupFilePattern {
+                        source_dir: characters_src_dir.clone(),
                         file_pattern: "*.fch".to_string()
                     }
-                ),
-                vec!(
-                    RedirectPath {
-                        from_dir: worlds_src_dir.to_str().unwrap().to_string(),
-                        to_dir: "".to_string()
-                    },
-                    RedirectPath {
-                        from_dir: characters_src_dir.to_str().unwrap().to_string(),
-                        to_dir: "".to_string()
-                    }
-                )
+                ],
+                vec![]
             )
         }
     };
 
     Ok(Settings {
-        settings_version: String::from("1"),
+        settings_version: SETTINGS_VERSION.to_string(),
         backup_paths,
-        redirect_paths
+        backup_dest_path: backup_dest_dir,
+        redirect_folders: redirect_paths
     })
 }
