@@ -4,6 +4,7 @@ use std::io::ErrorKind::NotFound;
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
+use glob::glob;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -16,6 +17,7 @@ pub struct Settings {
     pub settings_version: String,
     pub backup_paths: Vec<BackupFilePattern>,
     pub backup_dest_path: PathBuf,
+    pub backup_delay_sec: u32,
     pub redirect_folders: Vec<RedirectFolder>
 }
 
@@ -66,6 +68,9 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
             err = Err(
                 format!("Backup folder does not exist: {}", backup.source_dir.to_str().unwrap()));
             break;
+        }
+        if let Err(_) = glob(&backup.file_pattern) {
+            err = Err(format!("Invalid file pattern: {}", backup.file_pattern));
         }
     }
     if let Err(err_msg) = err {
@@ -200,6 +205,7 @@ pub fn get_default_settings() -> Result<Settings, SettingsError> {
         settings_version: SETTINGS_VERSION.to_string(),
         backup_paths,
         backup_dest_path: backup_dest_dir,
+        backup_delay_sec: 10,
         redirect_folders: redirect_paths
     })
 }

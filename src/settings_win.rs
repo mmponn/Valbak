@@ -11,10 +11,10 @@ use fltk::input::{FileInput, Input};
 use fltk::prelude::{BrowserExt, GroupExt, InputExt, WidgetBase, WidgetExt, WindowExt};
 use fltk::widget::Widget;
 use fltk::window::Window;
-use Message::SettingsBackupDestChoose;
+use UiMessage::SettingsBackupDestChoose;
 
-use crate::Message;
-use crate::Message::{SettingsOk, SettingsQuit};
+use crate::UiMessage;
+use crate::UiMessage::{SettingsOk, SettingsQuit};
 use crate::settings::{BackupFilePattern, RedirectFolder, Settings, SETTINGS_VERSION};
 use crate::win_common::{column_headers, make_list_browser, make_section_header};
 
@@ -30,7 +30,7 @@ impl SettingsWindow {
 
 impl SettingsWindow {
 
-    pub fn new(sender: Sender<Message>) -> SettingsWindow {
+    pub fn new(sender: Sender<UiMessage>) -> SettingsWindow {
         static WINDOW_SIZE: (i32, i32) = (800, 500);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
@@ -198,6 +198,8 @@ impl SettingsWindow {
             settings_version: SETTINGS_VERSION.to_string(),
             backup_paths: backup_settings,
             backup_dest_path: PathBuf::from(backup_dest_path),
+            //TODO get from input
+            backup_delay_sec: 10,
             redirect_folders: redirect_settings
         }
     }

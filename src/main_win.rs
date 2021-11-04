@@ -5,25 +5,24 @@ use fltk::{app::*, app, browser::*, button::*, enums::*, group::*, input::*, pre
 use fltk::frame::Frame;
 use fltk::menu::{MenuBar, MenuFlag};
 use fltk::misc::Tooltip;
+use fltk::tree::TreeItemDrawMode::LabelAndWidget;
 
-use crate::{Message, win_common};
-use crate::Message::{MenuAbout, MenuDocumentation, MenuQuit, MenuSettings};
+use crate::{UiMessage, win_common};
+use crate::backup::stop_backup_thread;
+use crate::UiMessage::{AppQuit, MenuAbout, MenuDocumentation, MenuQuit, MenuSettings};
 
 pub struct MainWindow {
     pub wind: DoubleWindow,
-    pub live_files: MultiBrowser,
-    pub backed_up_files: MultiBrowser,
-    pub restore_backups_button: Button,
-    pub delete_backups_button: Button,
-    pub redirect_list: MultiBrowser,
-    pub activate_redirect_button: Button,
-    pub deactivate_redirect_button: Button,
+    status_frame: Frame,
+    live_files: MultiBrowser,
+    backed_up_files: MultiBrowser,
+    redirect_list: MultiBrowser,
 }
 
 impl MainWindow {
 
-    pub fn new(sender: Sender<Message>) -> MainWindow {
-        static WINDOW_SIZE: (i32, i32) = (800, 665);
+    pub fn new(sender: Sender<UiMessage>) -> MainWindow {
+        static WINDOW_SIZE: (i32, i32) = (800, 715);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
         let mut wind = Window::default().with_label("Valbak");
@@ -33,10 +32,14 @@ impl MainWindow {
             .with_label("Menu");
         let text_size = menu.measure_label();
         menu.set_size(WINDOW_SIZE.0, text_size.1 + 10);
-        menu.add("File/Settings", Shortcut::None, MenuFlag::Normal, move |_menu_bar| sender.send(MenuSettings));
-        menu.add("File/Quit", Shortcut::None, MenuFlag::Normal, move |_menu_bar| sender.send(MenuQuit));
-        menu.add("Help/Documentation", Shortcut::None, MenuFlag::Normal, move |_menu_bar| sender.send(MenuDocumentation));
-        menu.add("Help/About", Shortcut::None, MenuFlag::Normal, move |_menu_bar| sender.send(MenuAbout));
+        menu.add("File/Settings", Shortcut::None, MenuFlag::Normal,
+            move |_menu_bar| sender.send(MenuSettings));
+        menu.add("File/Quit", Shortcut::None, MenuFlag::Normal,
+            move |_menu_bar| sender.send(MenuQuit));
+        menu.add("Help/Documentation", Shortcut::None, MenuFlag::Normal,
+            move |_menu_bar| sender.send(MenuDocumentation));
+        menu.add("Help/About", Shortcut::None, MenuFlag::Normal,
+            move |_menu_bar| sender.send(MenuAbout));
 
         let mut live_files;
         let mut backed_up_files;
@@ -46,6 +49,13 @@ impl MainWindow {
             .with_size(CONTENT_SIZE.0, CONTENT_SIZE.1)
             .with_pos(10, 10 + 20);
         content.set_spacing(5);
+
+        win_common::make_section_header("Status", true);
+        let mut status_frame = Frame::default();
+        status_frame.set_align(Align::Inside | Align::Left);
+        status_frame.set_label("Unknown");
+        let text_size = status_frame.measure_label();
+        status_frame.set_size(text_size.0, text_size.1);
 
         static FILE_LIST_COLUMN_WIDTHS: [i32; 3] = [CONTENT_SIZE.0 - 300, 200, 100];
         let file_header_texts: Vec<&str> = vec!["File", "File Date", "File Size"];
@@ -84,9 +94,9 @@ impl MainWindow {
         delete_backups_button.set_size(text_size.0 + 15, text_size.1 + 10);
 
        restore_backups_button
-            .emit(sender, Message::RestoreBackup);
+            .emit(sender, UiMessage::RestoreBackup);
        delete_backups_button
-            .emit(sender, Message::DeleteBackup);
+            .emit(sender, UiMessage::DeleteBackup);
 
         backed_up_files_buttons.set_size(0, text_size.1 + 10);
 
@@ -113,8 +123,8 @@ impl MainWindow {
         let text_size = deactivate_redirect_button.measure_label();
         deactivate_redirect_button.set_size(text_size.0 + 15, text_size.1 + 10);
 
-        activate_redirect_button.emit(sender, Message::ActivateRedirect);
-        deactivate_redirect_button.emit(sender, Message::DeactivateRedirect);
+        activate_redirect_button.emit(sender, UiMessage::ActivateRedirect);
+        deactivate_redirect_button.emit(sender, UiMessage::DeactivateRedirect);
 
         redirect_list_buttons.set_size(0, text_size.1 + 10);
 
@@ -124,23 +134,23 @@ impl MainWindow {
 
         wind.end();
 
-        wind.set_callback(|_wind| {
+        wind.set_callback(move |_| {
             if app::event() == Event::Close {
-                app::quit();
-                exit(0);
+                sender.send(AppQuit);
             }
         });
 
         MainWindow {
             wind,
+            status_frame,
             live_files,
             backed_up_files,
-            restore_backups_button,
-            delete_backups_button,
             redirect_list,
-            activate_redirect_button,
-            deactivate_redirect_button
         }
+    }
+
+    pub fn set_status(&mut self, status: String) {
+        self.status_frame.set_label(&status);
     }
 
 }
