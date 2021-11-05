@@ -8,8 +8,8 @@ use fltk::misc::Tooltip;
 use fltk::tree::TreeItemDrawMode::LabelAndWidget;
 
 use crate::{UiMessage, win_common};
-use crate::backup::stop_backup_thread;
 use crate::UiMessage::{AppQuit, MenuAbout, MenuDocumentation, MenuQuit, MenuSettings};
+use crate::watcher::stop_backup_thread;
 
 pub struct MainWindow {
     pub wind: DoubleWindow,
@@ -21,7 +21,7 @@ pub struct MainWindow {
 
 impl MainWindow {
 
-    pub fn new(sender: Sender<UiMessage>) -> MainWindow {
+    pub fn new(ui_thread_tx: Sender<UiMessage>) -> MainWindow {
         static WINDOW_SIZE: (i32, i32) = (800, 715);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
@@ -32,14 +32,18 @@ impl MainWindow {
             .with_label("Menu");
         let text_size = menu.measure_label();
         menu.set_size(WINDOW_SIZE.0, text_size.1 + 10);
+        let sender_copy = ui_thread_tx.clone();
         menu.add("File/Settings", Shortcut::None, MenuFlag::Normal,
-            move |_menu_bar| sender.send(MenuSettings));
+            move |_menu_bar| sender_copy.send(MenuSettings));
+        let sender_copy = ui_thread_tx.clone();
         menu.add("File/Quit", Shortcut::None, MenuFlag::Normal,
-            move |_menu_bar| sender.send(MenuQuit));
+            move |_menu_bar| sender_copy.send(MenuQuit));
+        let sender_copy = ui_thread_tx.clone();
         menu.add("Help/Documentation", Shortcut::None, MenuFlag::Normal,
-            move |_menu_bar| sender.send(MenuDocumentation));
+            move |_menu_bar| sender_copy.send(MenuDocumentation));
+        let sender_copy = ui_thread_tx.clone();
         menu.add("Help/About", Shortcut::None, MenuFlag::Normal,
-            move |_menu_bar| sender.send(MenuAbout));
+            move |_menu_bar| sender_copy.send(MenuAbout));
 
         let mut live_files;
         let mut backed_up_files;
@@ -93,10 +97,10 @@ impl MainWindow {
         let text_size = delete_backups_button.measure_label();
         delete_backups_button.set_size(text_size.0 + 15, text_size.1 + 10);
 
-       restore_backups_button
-            .emit(sender, UiMessage::RestoreBackup);
-       delete_backups_button
-            .emit(sender, UiMessage::DeleteBackup);
+        restore_backups_button
+            .emit(ui_thread_tx.clone(), UiMessage::RestoreBackup);
+        delete_backups_button
+            .emit(ui_thread_tx.clone(), UiMessage::DeleteBackup);
 
         backed_up_files_buttons.set_size(0, text_size.1 + 10);
 
@@ -123,8 +127,8 @@ impl MainWindow {
         let text_size = deactivate_redirect_button.measure_label();
         deactivate_redirect_button.set_size(text_size.0 + 15, text_size.1 + 10);
 
-        activate_redirect_button.emit(sender, UiMessage::ActivateRedirect);
-        deactivate_redirect_button.emit(sender, UiMessage::DeactivateRedirect);
+        activate_redirect_button.emit(ui_thread_tx.clone(), UiMessage::ActivateRedirect);
+        deactivate_redirect_button.emit(ui_thread_tx.clone(), UiMessage::DeactivateRedirect);
 
         redirect_list_buttons.set_size(0, text_size.1 + 10);
 
@@ -136,7 +140,7 @@ impl MainWindow {
 
         wind.set_callback(move |_| {
             if app::event() == Event::Close {
-                sender.send(AppQuit);
+                ui_thread_tx.send(AppQuit);
             }
         });
 

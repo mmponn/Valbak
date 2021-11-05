@@ -1,6 +1,6 @@
 use std::path::PathBuf;
+
 use fltk::app;
-use fltk::app::Sender;
 use fltk::browser::MultiBrowser;
 use fltk::button::Button;
 use fltk::dialog::{FileChooser, FileChooserType};
@@ -11,11 +11,12 @@ use fltk::input::{FileInput, Input};
 use fltk::prelude::{BrowserExt, GroupExt, InputExt, WidgetBase, WidgetExt, WindowExt};
 use fltk::widget::Widget;
 use fltk::window::Window;
+
 use UiMessage::SettingsBackupDestChoose;
 
+use crate::settings::{BackupFilePattern, RedirectFolder, Settings, SETTINGS_VERSION};
 use crate::UiMessage;
 use crate::UiMessage::{SettingsOk, SettingsQuit};
-use crate::settings::{BackupFilePattern, RedirectFolder, Settings, SETTINGS_VERSION};
 use crate::win_common::{column_headers, make_list_browser, make_section_header};
 
 pub struct SettingsWindow {
@@ -30,7 +31,7 @@ impl SettingsWindow {
 
 impl SettingsWindow {
 
-    pub fn new(sender: Sender<UiMessage>) -> SettingsWindow {
+    pub fn new(sender: app::Sender<UiMessage>) -> SettingsWindow {
         static WINDOW_SIZE: (i32, i32) = (800, 500);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
@@ -85,7 +86,7 @@ impl SettingsWindow {
         let text_size = backup_dest_select_button.measure_label();
         backup_dest_select_button.set_size(text_size.0 + 15, text_size.1 + 10);
         backup_dest_select_button.set_pos( CONTENT_SIZE.0 - backup_dest_select_button.width(), 0);
-        backup_dest_select_button.emit(sender, SettingsBackupDestChoose);
+        backup_dest_select_button.emit(sender.clone(), SettingsBackupDestChoose);
 
         backup_dest_input.set_size(
             CONTENT_SIZE.0 - backup_dest_select_button.width() - 5, backup_dest_input.height());
@@ -124,9 +125,6 @@ impl SettingsWindow {
         redirect_buttons.end();
         content.set_size(CONTENT_SIZE.0, redirect_buttons.y() + redirect_buttons.height());
 
-        let frame = Frame::default()
-            .with_size(0, 10);
-
         let mut bottom_button_group = Group::default();
 
         content.end();
@@ -136,14 +134,14 @@ impl SettingsWindow {
         let text_size = quit_button.measure_label();
         quit_button.set_size(text_size.0 + 50, text_size.1 + 14);
         quit_button.set_pos(CONTENT_SIZE.0 - quit_button.width() - 5, 0);
-        quit_button.emit(sender, SettingsQuit);
+        quit_button.emit(sender.clone(), SettingsQuit);
 
         let mut ok_button = Button::default()
             .with_label("Ok");
         let text_size = ok_button.measure_label();
         ok_button.set_size(text_size.0 + 50, text_size.1 + 14);
         ok_button.set_pos(quit_button.x() - ok_button.width() - 5, 0);
-        ok_button.emit(sender, SettingsOk);
+        ok_button.emit(sender.clone(), SettingsOk);
 
         bottom_button_group.set_size(CONTENT_SIZE.0, ok_button.height());
         bottom_button_group.add(&ok_button);

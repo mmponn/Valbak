@@ -7,7 +7,6 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use fltk::app;
-use fltk::app::{App, Receiver, Sender};
 use fltk::dialog::{alert_default, FileChooser, FileChooserType, message_default};
 use fltk::enums::Event;
 use fltk::prelude::{WidgetExt, WindowExt};
@@ -17,17 +16,17 @@ use thiserror::Error;
 use main_win::MainWindow;
 use settings_win::SettingsWindow;
 use UiMessage::*;
-use crate::backup::{BackupMessage, BackupResult, start_backup_thread, stop_backup_thread};
 
 use crate::settings::{get_default_settings, get_settings, Settings, SettingsError, write_settings};
+use crate::watcher::{BackupMessage, BackupStatus, start_backup_thread, stop_backup_thread};
 
 mod settings;
 mod main_win;
 mod settings_win;
 mod win_common;
-mod backup;
+mod watcher;
+mod file;
 
-#[derive(Copy, Clone)]
 pub enum UiMessage {
     AppQuit,
     MenuSettings,
@@ -41,6 +40,27 @@ pub enum UiMessage {
     DeleteBackup,
     ActivateRedirect,
     DeactivateRedirect,
+    SetStatus(String),
+}
+
+impl Clone for UiMessage {
+    fn clone(&self) -> Self {
+        match self {
+            AppQuit => AppQuit,
+            MenuSettings => MenuSettings,
+            MenuQuit => MenuQuit,
+            MenuDocumentation => MenuDocumentation,
+            MenuAbout => MenuAbout,
+            SettingsBackupDestChoose => SettingsBackupDestChoose,
+            SettingsOk => SettingsOk,
+            SettingsQuit => SettingsQuit,
+            RestoreBackup => RestoreBackup,
+            DeleteBackup => DeleteBackup,
+            ActivateRedirect => ActivateRedirect,
+            DeactivateRedirect => DeactivateRedirect,
+            SetStatus(status) => SetStatus(status.clone()),
+        }
+    }
 }
 
 pub struct MainState {
@@ -49,21 +69,23 @@ pub struct MainState {
     settings: Option<Settings>,
     backup_thread: Option<JoinHandle<()>>,
     backup_thread_tx: Option<mpsc::Sender<BackupMessage>>,
-    backup_thread_rx: Option<mpsc::Receiver<BackupResult>>,
+    backup_thread_rx: Option<mpsc::Receiver<BackupStatus>>,
+    ui_thread_tx: app::Sender<UiMessage>,
 }
 
 fn main() {
-    let app = App::default();
+    let app = app::App::default();
 
-    let (ui_tx, ui_rx) = app::channel::<UiMessage>();
+    let (ui_thread_tx, ui_thread_rx) = app::channel::<UiMessage>();
 
     let mut state = MainState {
-        main_win: MainWindow::new(ui_tx),
-        settings_win: SettingsWindow::new(ui_tx),
+        main_win: MainWindow::new(ui_thread_tx.clone()),
+        settings_win: SettingsWindow::new(ui_thread_tx.clone()),
         settings: None,
         backup_thread: None,
         backup_thread_tx: None,
-        backup_thread_rx: None
+        backup_thread_rx: None,
+        ui_thread_tx,
     };
 
     state.main_win.wind.show();
@@ -94,16 +116,16 @@ fn main() {
     }
 
     while app.wait() {
-        if let Some(msg) = ui_rx.recv() {
+        if let Some(msg) = ui_thread_rx.recv() {
             match msg {
                 MenuSettings => {
-                    stop_backup_thread(&mut state);
+                    stop_backup_thread(&mut state, false);
                     state.settings_win.wind.make_modal(true);
                     state.settings_win.wind.show();
                 }
                 AppQuit
                 | MenuQuit => {
-                    stop_backup_thread(&mut state);
+                    stop_backup_thread(&mut state, false);
                     app::quit();
                     exit(0);
                 }
@@ -139,7 +161,7 @@ fn main() {
                     }
                 }
                 SettingsQuit => {
-                    stop_backup_thread(&mut state);
+                    stop_backup_thread(&mut state, false);
                     app::quit();
                     exit(0);
                 }
@@ -154,6 +176,9 @@ fn main() {
                 }
                 DeactivateRedirect => {
                     println!("Deactivate Redirect");
+                }
+                SetStatus(status) => {
+                    state.main_win.set_status(status);
                 }
             }
         }

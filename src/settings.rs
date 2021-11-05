@@ -4,7 +4,7 @@ use std::io::ErrorKind::NotFound;
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
-use glob::glob;
+use glob::{glob, Pattern};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -69,7 +69,7 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
                 format!("Backup folder does not exist: {}", backup.source_dir.to_str().unwrap()));
             break;
         }
-        if let Err(_) = glob(&backup.file_pattern) {
+        if let Err(_) = Pattern::new(&backup.file_pattern) {
             err = Err(format!("Invalid file pattern: {}", backup.file_pattern));
         }
     }

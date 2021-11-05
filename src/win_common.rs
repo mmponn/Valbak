@@ -34,25 +34,25 @@ pub fn column_headers(column_header_texts: &Vec<&str>, column_header_widths: &'s
     let mut column_headers_pack = Pack::default()
         .size_of_parent()
         .with_type(PackType::Horizontal);
-    {
-        for (header_text, header_width) in column_header_texts.iter().zip(column_header_widths) {
-            let mut adjusted_header_text = String::from(" ");
-            adjusted_header_text.push_str(header_text);
 
-            let mut label_frame = Frame::default()
-                .with_label(&*adjusted_header_text);
-            label_frame.set_label_size(12);
-            let text_size = label_frame.measure_label();
-            label_frame.set_size(text_size.0, text_size.1);
+    for (header_text, header_width) in column_header_texts.iter().zip(column_header_widths) {
+        let mut adjusted_header_text = String::from(" ");
+        adjusted_header_text.push_str(header_text);
 
-            Frame::default()
-                .with_size(header_width - text_size.0, text_size.1);
+        let mut label_frame = Frame::default()
+            .with_label(&*adjusted_header_text);
+        label_frame.set_label_size(12);
+        let text_size = label_frame.measure_label();
+        label_frame.set_size(text_size.0, text_size.1);
 
-            max_header_width = max(text_size.0, max_header_width);
-            max_header_height = max(text_size.1, max_header_height);
-        }
-        column_headers_pack.set_size(max_header_width, max_header_height);
+        Frame::default()
+            .with_size(header_width - text_size.0, text_size.1);
+
+        max_header_width = max(text_size.0, max_header_width);
+        max_header_height = max(text_size.1, max_header_height);
     }
+    column_headers_pack.set_size(max_header_width, max_header_height);
+
     column_headers_pack.end();
 }
 
