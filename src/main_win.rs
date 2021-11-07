@@ -14,6 +14,7 @@ use crate::watcher::stop_backup_thread;
 pub struct MainWindow {
     pub wind: DoubleWindow,
     status_frame: Frame,
+    status_stack: Vec<String>,
     live_files: MultiBrowser,
     backed_up_files: MultiBrowser,
     redirect_list: MultiBrowser,
@@ -147,14 +148,31 @@ impl MainWindow {
         MainWindow {
             wind,
             status_frame,
+            status_stack: Vec::new(),
             live_files,
             backed_up_files,
             redirect_list,
         }
     }
 
+    pub fn push_status(&mut self, status: String) {
+        self.status_frame.set_label(&status);
+        self.status_stack.push(status);
+    }
+
+    pub fn pop_status(&mut self) {
+        self.status_stack.pop();
+        let status = match self.status_stack.last() {
+            None => "",
+            Some(status) => &status
+        };
+        self.status_frame.set_label(status);
+    }
+
     pub fn set_status(&mut self, status: String) {
         self.status_frame.set_label(&status);
+        self.status_stack.clear();
+        self.status_stack.push(status);
     }
 
 }

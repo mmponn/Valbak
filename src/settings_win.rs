@@ -27,9 +27,6 @@ pub struct SettingsWindow {
 }
 
 impl SettingsWindow {
-}
-
-impl SettingsWindow {
 
     pub fn new(sender: app::Sender<UiMessage>) -> SettingsWindow {
         static WINDOW_SIZE: (i32, i32) = (800, 500);

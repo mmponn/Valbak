@@ -1,7 +1,10 @@
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
-use std::sync::mpsc;
+use std::rc::Rc;
+use std::sync::{Arc, mpsc, Mutex, MutexGuard};
+use std::sync::mpsc::RecvTimeoutError;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -15,10 +18,12 @@ use crate::{MainState, UiMessage};
 use crate::file::backup_file;
 use crate::settings::Settings;
 
+const STOP_WATCHER_ERROR: &str = "STOP";
+
 #[derive(Debug)]
 pub enum BackupMessage {
     Run { settings: Settings },
-    Stop { update_status: bool },
+    Stop {},
 }
 
 #[derive(Error, Debug)]
@@ -33,84 +38,102 @@ impl Display for BackupStatus {
     }
 }
 
-pub fn start_backup_thread(main_state: &mut MainState) {
+pub fn start_backup_thread(state: &mut MainState) {
     println!("Starting backup thread");
-    assert!(main_state.settings.is_some(), "illegal state");
-    assert!(main_state.backup_thread.is_none(), "illegal state");
+    assert!(state.settings.is_some(), "illegal state");
+    assert!(state.backup_thread.is_none(), "illegal state");
 
     let (backup_message_tx, backup_message_rx) = mpsc::channel();
-    main_state.backup_thread_tx = Some(backup_message_tx.clone());
-    let ui_thread_tx = main_state.ui_thread_tx.clone();
-    main_state.backup_thread = Some(
+    state.backup_thread_tx = Some(backup_message_tx.clone());
+    let ui_thread_tx_copy = state.ui_thread_tx.clone();
+    state.backup_thread = Some(
         std::thread::spawn(
-            move || backup_thread_main(backup_message_rx, ui_thread_tx))
+            move || backup_thread_main(backup_message_rx, ui_thread_tx_copy))
     );
 
-    main_state.backup_thread_tx.as_ref().unwrap().send(
+    state.backup_thread_tx.as_ref().unwrap().send(
         BackupMessage::Run {
-            settings: main_state.settings.clone().unwrap()
+            settings: state.settings.clone().unwrap()
         });
 }
 
-pub fn stop_backup_thread(main_state: &mut MainState, update_status: bool) {
-    println!("Stopping backup thread");
-    assert!(main_state.backup_thread.is_some(), "illegal state");
-    assert!(main_state.backup_thread_tx.is_some(), "illegal state");
+pub fn stop_backup_thread(state: &mut MainState) -> JoinHandle<()> {
+    println!("Signaling backup thread to stop");
+    assert!(state.backup_thread.is_some(), "illegal state");
+    assert!(state.backup_thread_tx.is_some(), "illegal state");
 
-    main_state.backup_thread_tx.as_ref().unwrap().send(BackupMessage::Stop { update_status });
+    state.backup_thread_tx.as_ref().unwrap().send(BackupMessage::Stop {});
     let mut backup_thread = None;
-    std::mem::swap(&mut backup_thread, &mut main_state.backup_thread);
-    backup_thread.unwrap().join();
-    println!("Backup thread stopped");
+    std::mem::swap(&mut backup_thread, &mut state.backup_thread);
+    backup_thread.unwrap()
 }
 
 fn backup_thread_main(
-    backup_message_rx: mpsc::Receiver<BackupMessage>,
+    backup_thread_rx: mpsc::Receiver<BackupMessage>,
     ui_thread_tx: app::Sender<UiMessage>
 ) {
-    ui_thread_tx.send(UiMessage::SetStatus("Waiting".to_string()));
     let mut current_watcher = None;
+    let mut current_watcher_thread: Option<JoinHandle<()>> = None;
+    let mut current_watcher_thread_tx: Option<mpsc::Sender<DebouncedEvent>> = None;
+
     loop {
-        match backup_message_rx.recv() {
+        match backup_thread_rx.recv() {
             Err(err) => {
                 ui_thread_tx.send(UiMessage::SetStatus(format!("Error: {}", err)));
-                // Drops current_watcher if it exists, which will drop notify_tx, which will return an error
-                // from notify_rx.recv(), which will cause watcher_thread_main to return
+                println!("Backup thread stopped");
+                // Drops current_watcher if it exists, which will drop watcher_thread_tx, which will return an error
+                // from watcher_thread_rx.recv(), which will cause watcher_thread_main to return
                 return;
             }
             Ok(msg) => {
                 match msg {
+                    BackupMessage::Stop {} => {
+                        println!("Stopping backup thread");
+                        if current_watcher_thread_tx.is_some() {
+                            current_watcher_thread_tx.unwrap().send(
+                                DebouncedEvent::Error(
+                                    notify::Error::Generic(STOP_WATCHER_ERROR.to_string()),
+                                    None));
+                        }
+                        if current_watcher_thread.is_some() {
+                            current_watcher_thread.unwrap().join();
+                        }
+                        ui_thread_tx.send(UiMessage::SetStatus("Stopped".to_string()));
+                        println!("Backup thread stopped");
+                        return;
+                    }
                     BackupMessage::Run { settings } => {
                         assert!(current_watcher.is_none(), "illegal state");
 
-                        let (notify_tx, notify_rx) = mpsc::channel();
+                        let (watcher_thread_tx, watcher_thread_rx) = mpsc::channel();
+
+                        current_watcher_thread_tx = Some(watcher_thread_tx.clone());
 
                         let new_watcher = Watcher::new(
-                            notify_tx, Duration::from_secs(settings.backup_delay_sec as u64));
+                            watcher_thread_tx, Duration::from_secs(settings.backup_delay_sec as u64));
+
                         if let Err(err) = new_watcher {
                             ui_thread_tx.send(UiMessage::SetStatus(format!("Error: {}", err)));
+                            println!("Backup thread stopped");
+                            // Drops current_watcher if it exists, which will drop watcher_thread_tx, which will return
+                            // an error from watcher_thread_rx.recv(), which will cause watcher_thread_main to return
                             return;
                         }
                         let mut new_watcher: RecommendedWatcher = new_watcher.unwrap();
 
                         for backup_file_pattern in &settings.backup_paths {
+                            println!("Watching: {}", backup_file_pattern.source_dir.to_str().unwrap());
                             new_watcher.watch(&backup_file_pattern.source_dir, RecursiveMode::NonRecursive);
                         }
 
-                        std::thread::spawn(move || watcher_thread_main(settings, notify_rx));
+                        let ui_thread_tx_copy = ui_thread_tx.clone();
+                        current_watcher_thread = Some(
+                            std::thread::spawn(
+                                move || watcher_thread_main(settings, watcher_thread_rx, ui_thread_tx_copy))
+                        );
 
                         current_watcher = Some(new_watcher);
                         ui_thread_tx.send(UiMessage::SetStatus("Running".to_string()));
-                    }
-                    BackupMessage::Stop { update_status } => {
-                        println!(">>1");
-                        if update_status {
-                            ui_thread_tx.send(UiMessage::SetStatus("Stopped".to_string()));
-                        }
-                        println!(">>2");
-                        // Drops current_watcher if it exists, which will drop notify_tx, which will return an error
-                        // from notify_rx.recv(), which will cause watcher_thread_main to return
-                        return;
                     }
                 }
             }
@@ -118,12 +141,12 @@ fn backup_thread_main(
     }
 }
 
-fn watcher_thread_main(settings: Settings, notify_rx: mpsc::Receiver<DebouncedEvent>) {
+fn watcher_thread_main(settings: Settings, watcher_thread_rx: mpsc::Receiver<DebouncedEvent>, ui_thread_tx: app::Sender<UiMessage>) {
+    println!("Watcher thread started");
     loop {
-        match notify_rx.recv() {
+        match watcher_thread_rx.recv() {
             Err(err) => {
-                println!("Watcher thread done");
-                return;
+                panic!("Watcher error: {}", err);
             }
             Ok(file_event) => {
                 match file_event {
@@ -133,11 +156,32 @@ fn watcher_thread_main(settings: Settings, notify_rx: mpsc::Receiver<DebouncedEv
                             match Pattern::new(backup_file_pattern.file_pattern.as_str()) {
                                 Err(err) =>
                                     // This should have been caught previously
-                                    println!("internal error: {}", err),
+                                    panic!("illegal state"),
                                 Ok(file_pattern) =>
                                     if file_pattern.matches_path(&file_path) {
-                                        backup_file(settings.clone(), file_path.clone());
+                                        backup_file(settings.clone(), file_path.clone(), ui_thread_tx.clone());
                                     }
+                            }
+                        }
+                    }
+                    DebouncedEvent::Error(err, path) => {
+                        match err {
+                            notify::Error::Generic(err_msg) => {
+                                if err_msg == STOP_WATCHER_ERROR.to_string() {
+                                    println!("Watcher thread stopped");
+                                    return;
+                                } else {
+                                    println!("Watcher error for {:?}: {}", path, err_msg);
+                                }
+                            }
+                            notify::Error::Io(err) => {
+                                println!("Watcher IO error for {:?}: {}", path, err);
+                            }
+                            notify::Error::PathNotFound => {
+                                println!("Watcher path not found error for {:?}", path);
+                            }
+                            notify::Error::WatchNotFound => {
+                                println!("Watcher watch not found error for {:?}", path);
                             }
                         }
                     }

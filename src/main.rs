@@ -1,8 +1,12 @@
+use std::borrow::Borrow;
+use std::cell::RefCell;
 use std::error::Error;
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::process::exit;
-use std::sync::mpsc;
-use std::sync::mpsc::RecvError;
+use std::rc::Rc;
+use std::sync::{Arc, mpsc, Mutex, MutexGuard};
+use std::sync::mpsc::{Receiver, RecvError};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -40,6 +44,8 @@ pub enum UiMessage {
     DeleteBackup,
     ActivateRedirect,
     DeactivateRedirect,
+    PushStatus(String),
+    PopStatus,
     SetStatus(String),
 }
 
@@ -59,13 +65,15 @@ impl Clone for UiMessage {
             ActivateRedirect => ActivateRedirect,
             DeactivateRedirect => DeactivateRedirect,
             SetStatus(status) => SetStatus(status.clone()),
+            PushStatus(status) => PushStatus(status.clone()),
+            PopStatus => PopStatus,
         }
     }
 }
 
 pub struct MainState {
     main_win: MainWindow,
-    settings_win: SettingsWindow,
+    settings_win: Option<SettingsWindow>,
     settings: Option<Settings>,
     backup_thread: Option<JoinHandle<()>>,
     backup_thread_tx: Option<mpsc::Sender<BackupMessage>>,
@@ -78,56 +86,90 @@ fn main() {
 
     let (ui_thread_tx, ui_thread_rx) = app::channel::<UiMessage>();
 
-    let mut state = MainState {
-        main_win: MainWindow::new(ui_thread_tx.clone()),
-        settings_win: SettingsWindow::new(ui_thread_tx.clone()),
-        settings: None,
-        backup_thread: None,
-        backup_thread_tx: None,
-        backup_thread_rx: None,
-        ui_thread_tx,
-    };
+    let mut main_state = Arc::new(Mutex::new(
+        MainState {
+            main_win: MainWindow::new(ui_thread_tx.clone()),
+            settings_win: None,
+            settings: None,
+            backup_thread: None,
+            backup_thread_tx: None,
+            backup_thread_rx: None,
+            ui_thread_tx,
+        }));
+    let mut state = main_state.lock().unwrap();
 
     state.main_win.wind.show();
 
     match get_settings() {
         Ok(settings) => {
-            state.settings = Some(settings.clone());
-            //? state.settings_win.set_settings_to_win(settings);
+            state.settings = Some(settings);
             start_backup_thread(&mut state);
         }
         Err(SettingsError::SError(err_msg)) => {
-            fatal_error(err_msg);
+            fatal_error(main_state.clone(), err_msg);
         }
-        Err(SettingsError::SWarning(settings, msg)) => {
+        Err(SettingsError::SWarning(settings, warn_msg)) => {
             state.settings = Some(settings.clone());
-            state.settings_win.set_settings_to_win(settings);
-            state.settings_win.wind.show();
-            message_default(&msg);
+            let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
+            settings_win.set_settings_to_win(settings);
+            settings_win.wind.show();
+            state.settings_win = Some(settings_win);
+            message_default(&warn_msg);
         }
         Err(SettingsError::SNotFound(Some(settings))) => {
             // A settings file was just created with defaults and needs to be adjusted by the user
             state.settings = Some(settings.clone());
-            state.settings_win.set_settings_to_win(settings);
-            state.settings_win.wind.show();
+            let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
+            settings_win.set_settings_to_win(settings);
+            settings_win.wind.show();
+            state.settings_win = Some(settings_win);
         }
         _ =>
             panic!("illegal state")
     }
+    println!("Got settings");
 
-    while app.wait() {
-        if let Some(msg) = ui_thread_rx.recv() {
-            match msg {
-                MenuSettings => {
-                    stop_backup_thread(&mut state, false);
-                    state.settings_win.wind.make_modal(true);
-                    state.settings_win.wind.show();
+    // Release the lock
+    drop(state);
+
+    // Apparently sending UI messages from the main UI loop is unreliable
+    let mut internal_message_queue = Vec::new();
+
+    let mut quitting = false;
+    // wait() blocks until a message is ready for ui_thread_rx.recv()
+    while !internal_message_queue.is_empty() || app.wait() {
+        let mut ui_msg = internal_message_queue.pop();
+        if ui_msg.is_none() {
+            if let Some(msg) = ui_thread_rx.recv() {
+                ui_msg = Some(msg);
+            }
+        }
+        if let Some(ui_msg) = ui_msg {
+            if quitting {
+                // Ignore most messages
+                match ui_msg {
+                    PushStatus(_) => {}
+                    PopStatus => {}
+                    SetStatus(_) => {}
+                    _ => {
+                        println!("Quitting - and ignoring message");
+                        continue;
+                    }
                 }
-                AppQuit
-                | MenuQuit => {
-                    stop_backup_thread(&mut state, false);
-                    app::quit();
-                    exit(0);
+                println!("Quitting - and allowing message");
+            }
+            match ui_msg {
+                MenuSettings => {
+                    let mut state = main_state.lock().unwrap();
+                    assert!(state.settings.is_some(), "illegal state");
+                    // non-blocking call
+                    stop_backup_thread(&mut state);
+                    let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
+                    settings_win.set_settings_to_win(state.settings.as_ref().unwrap().clone());
+                    settings_win.wind.make_modal(true);
+                    // Note: Apparently only the UI thread can show windows
+                    settings_win.wind.show();
+                    state.settings_win = Some(settings_win);
                 }
                 MenuDocumentation => {
                     todo!();
@@ -136,15 +178,21 @@ fn main() {
                     todo!();
                 }
                 SettingsBackupDestChoose => {
-                    state.settings_win.choose_backup_dest_dir();
+                    let mut state = main_state.lock().unwrap();
+                    assert!(state.settings_win.is_some(), "illegal state");
+                    // Shows a file chooser window/dialog and blocks
+                    state.settings_win.as_mut().unwrap().choose_backup_dest_dir();
                 }
                 SettingsOk => {
-                    let settings = state.settings_win.get_settings_from_win();
+                    let mut state = main_state.lock().unwrap();
+                    assert!(state.settings_win.is_some(), "illegal state");
+                    let settings = state.settings_win.as_ref().unwrap().get_settings_from_win();
                     match settings::validate_settings(settings) {
                         Ok(settings) => {
                             write_settings(settings);
-                            state.settings_win.wind.hide();
                             start_backup_thread(&mut state);
+                            state.settings_win.as_mut().unwrap().wind.hide();
+                            state.settings_win = None;
                         }
                         Err(err) => {
                             match err {
@@ -152,7 +200,7 @@ fn main() {
                                     alert_default(&err_msg);
                                 }
                                 SettingsError::SError(err_msg) => {
-                                    fatal_error(err_msg);
+                                    fatal_error(main_state.clone(), err_msg);
                                 }
                                 _ =>
                                     panic!("illegal state")
@@ -160,10 +208,11 @@ fn main() {
                         }
                     }
                 }
-                SettingsQuit => {
-                    stop_backup_thread(&mut state, false);
-                    app::quit();
-                    exit(0);
+                AppQuit
+                | MenuQuit
+                | SettingsQuit => {
+                    quitting = true;
+                    start_graceful_quit(main_state.clone(), 0);
                 }
                 RestoreBackup => {
                     println!("Restore Backup");
@@ -177,7 +226,19 @@ fn main() {
                 DeactivateRedirect => {
                     println!("Deactivate Redirect");
                 }
+                PushStatus(status) => {
+                    println!("Pushing status message to: {}", &status);
+                    let mut state = main_state.lock().unwrap();
+                    state.main_win.push_status(status);
+                }
+                PopStatus => {
+                    println!("Popping status message");
+                    let mut state = main_state.lock().unwrap();
+                    state.main_win.pop_status();
+                }
                 SetStatus(status) => {
+                    println!("Setting status message to: {}", &status);
+                    let mut state = main_state.lock().unwrap();
                     state.main_win.set_status(status);
                 }
             }
@@ -185,9 +246,23 @@ fn main() {
     }
 }
 
-fn fatal_error(err_msg: String) {
+fn fatal_error(state: Arc<Mutex<MainState>>, err_msg: String) {
     let err_msg = err_msg + "\nFatal error - Valbak must close";
+    // blocks until user dismisses the alert box
     alert_default(&err_msg);
-    app::quit();
-    exit(1);
+    let exit_thread = start_graceful_quit(state, 1);
+    exit_thread.join();
+}
+
+fn start_graceful_quit(mut main_state: Arc<Mutex<MainState>>, exit_code: i32) -> JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut state = main_state.lock().unwrap();
+        state.ui_thread_tx.send(UiMessage::SetStatus("Quitting".to_string()));
+        if state.backup_thread.is_some() {
+            let backup_thread = stop_backup_thread(&mut state);
+            drop(state);
+            backup_thread.join();
+        }
+        exit(exit_code);
+    })
 }
