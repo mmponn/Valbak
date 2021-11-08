@@ -5,7 +5,7 @@ use std::ops::Deref;
 use std::path::PathBuf;
 use std::process::exit;
 use std::rc::Rc;
-use std::sync::{Arc, mpsc, Mutex, MutexGuard};
+use std::sync::{Arc, mpsc, Mutex, MutexGuard, TryLockResult};
 use std::sync::mpsc::{Receiver, RecvError};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -21,7 +21,9 @@ use main_win::MainWindow;
 use settings_win::SettingsWindow;
 use UiMessage::*;
 
+use crate::file::{clean_backups, get_backed_up_files, get_live_files};
 use crate::settings::{get_default_settings, get_settings, Settings, SettingsError, write_settings};
+use crate::settings_win::SettingsWinError;
 use crate::watcher::{BackupMessage, BackupStatus, start_backup_thread, stop_backup_thread};
 
 mod settings;
@@ -47,6 +49,7 @@ pub enum UiMessage {
     PushStatus(String),
     PopStatus,
     SetStatus(String),
+    RefreshFilesLists,
 }
 
 impl Clone for UiMessage {
@@ -67,6 +70,7 @@ impl Clone for UiMessage {
             SetStatus(status) => SetStatus(status.clone()),
             PushStatus(status) => PushStatus(status.clone()),
             PopStatus => PopStatus,
+            RefreshFilesLists => RefreshFilesLists,
         }
     }
 }
@@ -94,7 +98,7 @@ fn main() {
             backup_thread: None,
             backup_thread_tx: None,
             backup_thread_rx: None,
-            ui_thread_tx,
+            ui_thread_tx: ui_thread_tx.clone(),
         }));
     let mut state = main_state.lock().unwrap();
 
@@ -106,6 +110,7 @@ fn main() {
             start_backup_thread(&mut state);
         }
         Err(SettingsError::SError(err_msg)) => {
+            drop(state);
             fatal_error(main_state.clone(), err_msg);
         }
         Err(SettingsError::SWarning(settings, warn_msg)) => {
@@ -128,6 +133,10 @@ fn main() {
             panic!("illegal state")
     }
     println!("Got settings");
+
+    if (state.settings.is_some()) {
+        ui_thread_tx.send(UiMessage::RefreshFilesLists);
+    }
 
     // Release the lock
     drop(state);
@@ -180,33 +189,52 @@ fn main() {
                 SettingsBackupDestChoose => {
                     let mut state = main_state.lock().unwrap();
                     assert!(state.settings_win.is_some(), "illegal state");
+                    assert!(state.settings.is_some(), "illegal state");
+                    let settings = state.settings.as_ref().unwrap().clone();
                     // Shows a file chooser window/dialog and blocks
-                    state.settings_win.as_mut().unwrap().choose_backup_dest_dir();
+                    state.settings_win.as_mut().unwrap().choose_backup_dest_dir(settings);
                 }
                 SettingsOk => {
                     let mut state = main_state.lock().unwrap();
                     assert!(state.settings_win.is_some(), "illegal state");
-                    let settings = state.settings_win.as_ref().unwrap().get_settings_from_win();
-                    match settings::validate_settings(settings) {
+                    match state.settings_win.as_ref().unwrap().get_settings_from_win() {
                         Ok(settings) => {
-                            write_settings(settings);
-                            start_backup_thread(&mut state);
-                            state.settings_win.as_mut().unwrap().wind.hide();
-                            state.settings_win = None;
+                            match settings::validate_settings(settings) {
+                                Ok(settings) => {
+                                    state.settings = Some(settings.clone());
+                                    write_settings(settings.clone());
+                                    state.settings_win.as_mut().unwrap().wind.hide();
+                                    state.settings_win = None;
+                                    start_backup_thread(&mut state);
+                                    clean_backups(settings);
+                                    internal_message_queue.push(UiMessage::RefreshFilesLists);
+                                }
+                                Err(err) => {
+                                    match err {
+                                        SettingsError::SWarning(_settings, err_msg) => {
+                                            alert_default(&err_msg);
+                                        }
+                                        SettingsError::SError(err_msg) => {
+                                            drop(state);
+                                            fatal_error(main_state.clone(), err_msg);
+                                        }
+                                        _ =>
+                                            panic!("illegal state")
+                                    }
+                                }
+                            }
                         }
                         Err(err) => {
                             match err {
-                                SettingsError::SWarning(settings, err_msg) => {
+                                SettingsWinError::SwWarning(err_msg) => {
                                     alert_default(&err_msg);
                                 }
-                                SettingsError::SError(err_msg) => {
+                                SettingsWinError::SwError(err_msg) => {
                                     fatal_error(main_state.clone(), err_msg);
                                 }
-                                _ =>
-                                    panic!("illegal state")
                             }
                         }
-                    }
+                    };
                 }
                 AppQuit
                 | MenuQuit
@@ -240,24 +268,38 @@ fn main() {
                     println!("Setting status message to: {}", &status);
                     let mut state = main_state.lock().unwrap();
                     state.main_win.set_status(status);
+                },
+                RefreshFilesLists => {
+                    let mut state = main_state.lock().unwrap();
+                    let live_files = get_live_files(state.settings.as_ref().unwrap().clone());
+                    state.main_win.set_live_files_to_win(live_files);
+
+                    let backup_files = get_backed_up_files(state.settings.as_ref().unwrap().clone());
+                    state.main_win.set_backed_up_files_to_win(backup_files);
                 }
             }
         }
     }
 }
 
-fn fatal_error(state: Arc<Mutex<MainState>>, err_msg: String) {
+fn fatal_error(main_state: Arc<Mutex<MainState>>, err_msg: String) -> ! {
     let err_msg = err_msg + "\nFatal error - Valbak must close";
     // blocks until user dismisses the alert box
     alert_default(&err_msg);
-    let exit_thread = start_graceful_quit(state, 1);
+    let exit_thread = start_graceful_quit(main_state, 1);
     exit_thread.join();
+    // The exit thread should terminate the app before this occurs
+    exit(1);
 }
 
 fn start_graceful_quit(mut main_state: Arc<Mutex<MainState>>, exit_code: i32) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        let mut state = main_state.lock().unwrap();
-        state.ui_thread_tx.send(UiMessage::SetStatus("Quitting".to_string()));
+        let mut state = match main_state.try_lock() {
+            Ok(lock) =>
+                lock,
+            Err(err) =>
+                panic!("illegal state - main state lock not released")
+        };
         if state.backup_thread.is_some() {
             let backup_thread = stop_backup_thread(&mut state);
             drop(state);

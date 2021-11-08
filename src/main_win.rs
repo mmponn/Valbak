@@ -1,6 +1,8 @@
 use std::cmp::max;
+use std::path::PathBuf;
 use std::process::exit;
 
+use chrono::{DateTime, Local};
 use fltk::{app::*, app, browser::*, button::*, enums::*, group::*, input::*, prelude::*, window::*};
 use fltk::frame::Frame;
 use fltk::menu::{MenuBar, MenuFlag};
@@ -23,7 +25,7 @@ pub struct MainWindow {
 impl MainWindow {
 
     pub fn new(ui_thread_tx: Sender<UiMessage>) -> MainWindow {
-        static WINDOW_SIZE: (i32, i32) = (800, 715);
+        static WINDOW_SIZE: (i32, i32) = (1024, 715);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
         let mut wind = Window::default().with_label("Valbak");
@@ -70,20 +72,12 @@ impl MainWindow {
         win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
         live_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 100);
 
-        live_files.add("File #1|2021-10-17 12:22pm|102kb");
-        live_files.add("File #2|2021-10-15 2:22pm|233kb");
-        live_files.add("File #3|2021-10-14 8:22pm|12kb");
-
         live_files.set_selection_color(Color::White);
 
         // Backed-Up Files
         win_common::make_section_header("Backed-Up Files", true);
         win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
         backed_up_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 200);
-
-        backed_up_files.add("File #1|2021-10-17 12:22pm|102kb");
-        backed_up_files.add("File #2|2021-10-15 2:22pm|233kb");
-        backed_up_files.add("File #3|2021-10-14 8:22pm|12kb");
 
         let mut backed_up_files_buttons = Pack::default()
             .with_type(PackType::Horizontal);
@@ -175,4 +169,78 @@ impl MainWindow {
         self.status_stack.push(status);
     }
 
+    pub fn set_live_files_to_win(&mut self, mut live_files: Vec<PathBuf>) {
+        live_files.sort();
+        self.live_files.clear();
+        for live_file in live_files {
+            let live_file_metadata = match live_file.metadata() {
+                Err(err) => {
+                    println!("Error reading file metadata for {}: {}", live_file.to_str().unwrap(), err);
+                    continue;
+                }
+                Ok(metadata) =>
+                    metadata
+            };
+            let live_file_modified = match live_file_metadata.modified() {
+                Err(err) => {
+                    println!("Error reading file modified time for {}: {}", live_file.to_str().unwrap(), err);
+                    continue;
+                }
+                Ok(modified) =>
+                    modified
+            };
+            let live_file_modified: DateTime<Local> = live_file_modified.into();
+            let mut live_file_size_mb = live_file_metadata.len() / (1000 * 1000);
+            let live_file_size;
+            if live_file_size_mb > 0 {
+                live_file_size = live_file_size_mb.to_string() + "mb";
+            } else {
+                live_file_size = (live_file_metadata.len() / 1000).to_string() + "kb";
+            }
+            let live_file_line = format!("{}|{}|{}",
+                live_file.to_str().unwrap(),
+                live_file_modified.format("%m/%d/%Y %T"),
+                live_file_size
+            );
+            self.live_files.add(&live_file_line);
+        }
+    }
+
+    pub fn set_backed_up_files_to_win(&mut self, mut backed_up_files: Vec<PathBuf>) {
+        backed_up_files.sort();
+        backed_up_files.reverse();
+        self.backed_up_files.clear();
+        for backed_up_file in backed_up_files {
+            let backed_up_file_metadata = match backed_up_file.metadata() {
+                Err(err) => {
+                    println!("Error reading file metadata for {}: {}", backed_up_file.to_str().unwrap(), err);
+                    continue;
+                }
+                Ok(metadata) =>
+                    metadata
+            };
+            let backed_up_file_modified = match backed_up_file_metadata.modified() {
+                Err(err) => {
+                    println!("Error reading file modified time for {}: {}", backed_up_file.to_str().unwrap(), err);
+                    continue;
+                }
+                Ok(modified) =>
+                    modified
+            };
+            let backed_up_file_modified: DateTime<Local> = backed_up_file_modified.into();
+            let mut backed_up_file_size_mb = backed_up_file_metadata.len() / (1000 * 1000);
+            let backed_up_file_size;
+            if backed_up_file_size_mb > 0 {
+                backed_up_file_size = backed_up_file_size_mb.to_string() + "mb";
+            } else {
+                backed_up_file_size = (backed_up_file_metadata.len() / 1000).to_string() + "kb";
+            }
+            let backed_up_file_line = format!("{}|{}|{}",
+                backed_up_file.to_str().unwrap(),
+                backed_up_file_modified.format("%m/%d/%Y %T"),
+                backed_up_file_size
+            );
+            self.backed_up_files.add(&backed_up_file_line);
+        }
+    }
 }

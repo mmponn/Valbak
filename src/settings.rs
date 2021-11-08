@@ -17,7 +17,8 @@ pub struct Settings {
     pub settings_version: String,
     pub backup_paths: Vec<BackupFilePattern>,
     pub backup_dest_path: PathBuf,
-    pub backup_delay_sec: u32,
+    pub backup_count: u8,
+    pub backup_delay_sec: u8,
     pub redirect_folders: Vec<RedirectFolder>
 }
 
@@ -205,6 +206,7 @@ pub fn get_default_settings() -> Result<Settings, SettingsError> {
         settings_version: SETTINGS_VERSION.to_string(),
         backup_paths,
         backup_dest_path: backup_dest_dir,
+        backup_count: 5,
         backup_delay_sec: 10,
         redirect_folders: redirect_paths
     })

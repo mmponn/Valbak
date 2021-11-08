@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use std::path::PathBuf;
 
 use fltk::app;
@@ -11,25 +12,40 @@ use fltk::input::{FileInput, Input};
 use fltk::prelude::{BrowserExt, GroupExt, InputExt, WidgetBase, WidgetExt, WindowExt};
 use fltk::widget::Widget;
 use fltk::window::Window;
+use thiserror::Error;
 
 use UiMessage::SettingsBackupDestChoose;
 
-use crate::settings::{BackupFilePattern, RedirectFolder, Settings, SETTINGS_VERSION};
+use crate::settings::{BackupFilePattern, RedirectFolder, Settings, SETTINGS_VERSION, SettingsError};
 use crate::UiMessage;
 use crate::UiMessage::{SettingsOk, SettingsQuit};
 use crate::win_common::{column_headers, make_list_browser, make_section_header};
+
+#[derive(Error, Debug)]
+pub enum SettingsWinError {
+    SwWarning(String),
+    SwError(String)
+}
+
+impl Display for SettingsWinError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
 
 pub struct SettingsWindow {
     pub wind: Window,
     backup_files_browser: MultiBrowser,
     backup_dest_input: Input,
+    backup_count_input: Input,
+    backup_delay_input: Input,
     redirect_folders_browser: MultiBrowser,
 }
 
 impl SettingsWindow {
 
     pub fn new(sender: app::Sender<UiMessage>) -> SettingsWindow {
-        static WINDOW_SIZE: (i32, i32) = (800, 500);
+        static WINDOW_SIZE: (i32, i32) = (800, 610);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
         let mut wind = Window::default().with_label("Settings");
@@ -90,6 +106,16 @@ impl SettingsWindow {
 
         backup_dest_fields.set_size(0, backup_dest_select_button.height());
         backup_dest_fields.end();
+
+        make_section_header("Maximum number of backups per file", true);
+
+        let mut backup_count_input = Input::default();
+        backup_count_input.set_size(0, backup_count_input.text_size() + 12);
+
+        make_section_header("File backup delay in seconds", true);
+
+        let mut backup_delay_input = Input::default();
+        backup_delay_input.set_size(0, backup_delay_input.text_size() + 12);
 
         static REDIRECT_LIST_COLUMN_WIDTHS: [i32; 2] = [CONTENT_SIZE.0 / 2, CONTENT_SIZE.0 / 2];
 
@@ -156,11 +182,13 @@ impl SettingsWindow {
             wind,
             backup_files_browser,
             backup_dest_input,
+            backup_count_input,
+            backup_delay_input,
             redirect_folders_browser,
         }
     }
 
-    pub fn get_settings_from_win(&self) -> Settings {
+    pub fn get_settings_from_win(&self) -> Result<Settings, SettingsWinError> {
         let mut backup_settings = vec![];
         for i in 1..=self.backup_files_browser.size() {
             let text = self.backup_files_browser.text(i);
@@ -176,6 +204,26 @@ impl SettingsWindow {
 
         let backup_dest_path = self.backup_dest_input.value();
 
+        let backup_count = self.backup_count_input.value();
+        let backup_count = match backup_count.parse::<u8>() {
+            Ok(count) =>
+                count,
+            Err(err) =>
+                return Err(
+                    SettingsWinError::SwWarning(format!("Invalid backup count: {}", backup_count))
+                )
+        };
+
+        let backup_delay_sec = self.backup_delay_input.value();
+        let backup_delay_sec = match backup_delay_sec.parse::<u8>() {
+            Ok(delay_sec) =>
+                delay_sec,
+            Err(err) =>
+                return Err(
+                    SettingsWinError::SwWarning(format!("Invalid delay seconds: {}", backup_delay_sec))
+                )
+        };
+
         let mut redirect_settings = vec![];
         for i in 1..=self.redirect_folders_browser.size() {
             let text = self.redirect_folders_browser.text(i);
@@ -189,14 +237,14 @@ impl SettingsWindow {
             });
         }
 
-        Settings {
-            settings_version: SETTINGS_VERSION.to_string(),
-            backup_paths: backup_settings,
-            backup_dest_path: PathBuf::from(backup_dest_path),
-            //TODO get from input
-            backup_delay_sec: 10,
-            redirect_folders: redirect_settings
-        }
+        Ok(Settings {
+                settings_version: SETTINGS_VERSION.to_string(),
+                backup_paths: backup_settings,
+                backup_dest_path: PathBuf::from(backup_dest_path),
+                backup_count,
+                backup_delay_sec,
+                redirect_folders: redirect_settings
+        })
     }
 
     pub fn set_settings_to_win(&mut self, settings: Settings) {
@@ -208,7 +256,13 @@ impl SettingsWindow {
             );
             self.backup_files_browser.add(&backup_file_line);
         }
+
         self.backup_dest_input.set_value(settings.backup_dest_path.to_str().unwrap());
+
+        self.backup_count_input.set_value(&settings.backup_count.to_string());
+
+        self.backup_delay_input.set_value(&settings.backup_delay_sec.to_string());
+
         for redirect_folder in settings.redirect_folders {
             let redirect_path_line = format!("{}|{}",
                 redirect_folder.from_dir.to_str().unwrap(),
@@ -228,8 +282,7 @@ impl SettingsWindow {
         }
     }
 
-    pub fn choose_backup_dest_dir(&mut self) {
-        let mut settings = self.get_settings_from_win();
+    pub fn choose_backup_dest_dir(&mut self, mut settings: Settings) {
         let mut file_chooser =
             FileChooser::new(settings.backup_dest_path.to_str().unwrap(),
                              "",

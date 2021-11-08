@@ -15,7 +15,7 @@ use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
 use crate::{MainState, UiMessage};
-use crate::file::backup_file;
+use crate::file::{backup_file, clean_backups};
 use crate::settings::Settings;
 
 const STOP_WATCHER_ERROR: &str = "STOP";
@@ -155,11 +155,13 @@ fn watcher_thread_main(settings: Settings, watcher_thread_rx: mpsc::Receiver<Deb
                         for backup_file_pattern in &settings.backup_paths {
                             match Pattern::new(backup_file_pattern.file_pattern.as_str()) {
                                 Err(err) =>
-                                    // This should have been caught previously
-                                    panic!("illegal state"),
+                                    // This should have already been caught
+                                    panic!("illegal state: {}", err),
                                 Ok(file_pattern) =>
                                     if file_pattern.matches_path(&file_path) {
                                         backup_file(settings.clone(), file_path.clone(), ui_thread_tx.clone());
+                                        clean_backups(settings.clone());
+                                        ui_thread_tx.send(UiMessage::RefreshFilesLists);
                                     }
                             }
                         }
