@@ -1,22 +1,24 @@
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt::{Display, Formatter};
+use std::fs::Metadata;
 use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, mpsc, Mutex, MutexGuard};
 use std::sync::mpsc::RecvTimeoutError;
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
+use chrono::{DateTime, Local};
 use fltk::app;
 use fltk::prelude::WidgetExt;
 use glob::{GlobResult, Paths, Pattern, PatternError};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
-use crate::{MainState, UiMessage};
-use crate::file::{backup_file, clean_backups};
-use crate::settings::Settings;
+use crate::{AlertQuit, MainState, PushStatus, SetStatus, UiMessage};
+use crate::file::{backup_file, clean_backups, file_has_backup, get_backed_up_file_paths, get_file_metadata};
+use crate::settings::{BackupFilePattern, Settings};
 
 const STOP_WATCHER_ERROR: &str = "STOP";
 
@@ -121,9 +123,10 @@ fn backup_thread_main(
                         }
                         let mut new_watcher: RecommendedWatcher = new_watcher.unwrap();
 
+                        //TODO dedup directories - multiple patterns will use the same source dir
                         for backup_file_pattern in &settings.backup_paths {
-                            println!("Watching: {}", backup_file_pattern.source_dir.to_str().unwrap());
                             new_watcher.watch(&backup_file_pattern.source_dir, RecursiveMode::NonRecursive);
+                            println!("Watching: {}", backup_file_pattern.source_dir.to_str().unwrap());
                         }
 
                         let ui_thread_tx_copy = ui_thread_tx.clone();
@@ -152,19 +155,7 @@ fn watcher_thread_main(settings: Settings, watcher_thread_rx: mpsc::Receiver<Deb
                 match file_event {
                     DebouncedEvent::Create(file_path)
                     | DebouncedEvent::Write(file_path) => {
-                        for backup_file_pattern in &settings.backup_paths {
-                            match Pattern::new(backup_file_pattern.file_pattern.as_str()) {
-                                Err(err) =>
-                                    // This should have already been caught
-                                    panic!("illegal state: {}", err),
-                                Ok(file_pattern) =>
-                                    if file_pattern.matches_path(&file_path) {
-                                        backup_file(settings.clone(), file_path.clone(), ui_thread_tx.clone());
-                                        clean_backups(settings.clone());
-                                        ui_thread_tx.send(UiMessage::RefreshFilesLists);
-                                    }
-                            }
-                        }
+                        on_file_change(file_path, &settings, ui_thread_tx.clone());
                     }
                     DebouncedEvent::Error(err, path) => {
                         match err {
@@ -191,5 +182,20 @@ fn watcher_thread_main(settings: Settings, watcher_thread_rx: mpsc::Receiver<Deb
                 }
             }
         }
+    }
+}
+
+fn on_file_change( backup_file_path: PathBuf, settings: &Settings, ui_thread_tx: app::Sender<UiMessage> ) {
+    let file_has_backup = match file_has_backup(settings.clone(), backup_file_path.clone()) {
+        Ok(has_backup) => has_backup,
+        Err(err) => {
+            println!("{}: {}", backup_file_path.to_str().unwrap(), err);
+            return;
+        }
+    };
+    if !file_has_backup {
+        backup_file(settings.clone(), backup_file_path.clone());
+        clean_backups(settings.clone());
+        ui_thread_tx.send(UiMessage::RefreshFilesLists);
     }
 }

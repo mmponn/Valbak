@@ -21,7 +21,7 @@ use main_win::MainWindow;
 use settings_win::SettingsWindow;
 use UiMessage::*;
 
-use crate::file::{clean_backups, get_backed_up_files, get_live_files};
+use crate::file::{backup_all_changed_files, clean_backups, get_backed_up_files, get_live_files};
 use crate::settings::{get_default_settings, get_settings, Settings, SettingsError, write_settings};
 use crate::settings_win::SettingsWinError;
 use crate::watcher::{BackupMessage, BackupStatus, start_backup_thread, stop_backup_thread};
@@ -34,6 +34,7 @@ mod watcher;
 mod file;
 
 pub enum UiMessage {
+    AlertQuit(String),
     AppQuit,
     MenuSettings,
     MenuQuit,
@@ -55,6 +56,7 @@ pub enum UiMessage {
 impl Clone for UiMessage {
     fn clone(&self) -> Self {
         match self {
+            AlertQuit(alert_msg) => AlertQuit(alert_msg.clone()),
             AppQuit => AppQuit,
             MenuSettings => MenuSettings,
             MenuQuit => MenuQuit,
@@ -106,14 +108,17 @@ fn main() {
 
     match get_settings() {
         Ok(settings) => {
+            // Settings loaded without error
             state.settings = Some(settings);
             start_backup_thread(&mut state);
         }
         Err(SettingsError::SError(err_msg)) => {
+            // Settings could not be loaded
             drop(state);
             fatal_error(main_state.clone(), err_msg);
         }
         Err(SettingsError::SWarning(settings, warn_msg)) => {
+            // Settings loaded with error
             state.settings = Some(settings.clone());
             let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
             settings_win.set_settings_to_win(settings);
@@ -134,7 +139,8 @@ fn main() {
     }
     println!("Got settings");
 
-    if (state.settings.is_some()) {
+    if state.settings.is_some() {
+        backup_all_changed_files(state.settings.as_ref().unwrap().clone());
         ui_thread_tx.send(UiMessage::RefreshFilesLists);
     }
 
@@ -206,6 +212,7 @@ fn main() {
                                     state.settings_win.as_mut().unwrap().wind.hide();
                                     state.settings_win = None;
                                     start_backup_thread(&mut state);
+                                    backup_all_changed_files(settings.clone());
                                     clean_backups(settings);
                                     internal_message_queue.push(UiMessage::RefreshFilesLists);
                                 }
@@ -236,6 +243,11 @@ fn main() {
                         }
                     };
                 }
+                AlertQuit(alert_msg) => {
+                    quitting = true;
+                    alert_default(&alert_msg);
+                    start_graceful_quit(main_state.clone(), 1);
+                }
                 AppQuit
                 | MenuQuit
                 | SettingsQuit => {
@@ -243,7 +255,14 @@ fn main() {
                     start_graceful_quit(main_state.clone(), 0);
                 }
                 RestoreBackup => {
-                    println!("Restore Backup");
+                    let mut state = main_state.lock().unwrap();
+                    let selected_backup_paths = state.main_win.get_selected_backed_up_paths();
+                    if !selected_backup_paths.is_empty() {
+                        //TODO show confirmation dialog
+                        assert!(state.settings.is_some(), "illegal state");
+                        file::restore_backed_up_files(state.settings.as_ref().unwrap().clone(), selected_backup_paths);
+                    }
+                    internal_message_queue.push(UiMessage::RefreshFilesLists);
                 }
                 DeleteBackup => {
                     println!("Delete Backup");
@@ -274,8 +293,8 @@ fn main() {
                     let live_files = get_live_files(state.settings.as_ref().unwrap().clone());
                     state.main_win.set_live_files_to_win(live_files);
 
-                    let backup_files = get_backed_up_files(state.settings.as_ref().unwrap().clone());
-                    state.main_win.set_backed_up_files_to_win(backup_files);
+                    let backed_up_files = get_backed_up_files(state.settings.as_ref().unwrap().clone());
+                    state.main_win.set_backed_up_files_to_win(backed_up_files);
                 }
             }
         }

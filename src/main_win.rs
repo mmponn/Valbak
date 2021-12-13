@@ -243,4 +243,26 @@ impl MainWindow {
             self.backed_up_files.add(&backed_up_file_line);
         }
     }
+
+    pub fn get_selected_backed_up_paths(&self) -> Vec<PathBuf> {
+        let mut selected_backed_up_paths = Vec::new();
+        for i in 1..=self.backed_up_files.size() {
+            if self.backed_up_files.selected(i) {
+                let selected_line = match self.backed_up_files.text(i) {
+                    None =>
+                        panic!("illegal state"),
+                    Some(text) =>
+                        text
+                };
+                let backed_up_path = match selected_line.split("|").next() {
+                    None =>
+                        panic!("illegal state"),
+                    Some(backed_up_path) =>
+                        backed_up_path
+                };
+                selected_backed_up_paths.push(PathBuf::from(backed_up_path));
+            }
+        }
+        selected_backed_up_paths
+    }
 }

@@ -28,6 +28,12 @@ pub struct BackupFilePattern {
     pub file_pattern: String
 }
 
+impl BackupFilePattern {
+    pub fn to_path(&self) -> PathBuf {
+        self.source_dir.join(self.file_pattern.clone())
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct RedirectFolder {
     pub from_dir: PathBuf,
