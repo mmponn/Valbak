@@ -1,9 +1,11 @@
 use std::fmt::{Display, Formatter};
 use std::fs;
+use std::io::ErrorKind;
 use std::io::ErrorKind::NotFound;
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
+use fltk::dialog::{alert_default, choice_default};
 use glob::{glob, Pattern};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -89,9 +91,22 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
         return Err(SWarning(settings, err_msg));
     }
     if settings.backup_dest_path != PathBuf::new() && !settings.backup_dest_path.is_dir() {
-        let err_msg =
-            format!("Destination folder does not exist: {}", settings.backup_dest_path.to_str().unwrap());
-        return Err(SWarning(settings, err_msg));
+        match choice_default(
+            format!("Destination folder does not exist: {}\nCreate it?",
+                settings.backup_dest_path.to_str().unwrap()).as_str(),
+            "Cancel", "Yes", ""
+        ) {
+            0 => {
+                // Cancel
+                return Err(SWarning(settings, "".to_string()));
+            }
+            _ => {
+                // Yes
+                if let Err(err) = std::fs::create_dir_all(settings.backup_dest_path.clone()) {
+                    alert_default(format!("Error: {}", err).as_str());
+                }
+            }
+        }
     }
 
     for redirect in settings.redirect_folders.iter() {
@@ -136,6 +151,16 @@ fn read_settings() -> Result<Settings, SettingsError> {
 
 pub fn write_settings(settings: Settings) -> Result<Settings, SettingsError> {
     let settings_path = get_settings_path()?;
+
+    let settings_dir_path = settings_path.parent().unwrap();
+    if let Err(err) = std::fs::create_dir_all(settings_dir_path) {
+        if err.kind() != ErrorKind::AlreadyExists {
+            let err_msg = format!("Error creating settings directory {}: {}",
+                settings_dir_path.to_str().unwrap(), err);
+            println!("{}", err_msg);
+            return Err(SWarning(settings, err_msg));
+        }
+    }
 
     let settings_str = match serde_json::to_string(&settings) {
         Err(err) => return Err(SError(format!("Error writing settings: {}", err))),

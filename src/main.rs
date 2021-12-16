@@ -19,6 +19,7 @@ use thiserror::Error;
 
 use main_win::MainWindow;
 use settings_win::SettingsWindow;
+use SettingsError::{SError, SWarning};
 use UiMessage::*;
 
 use crate::file::{backup_all_changed_files, clean_backups, get_backed_up_files, get_live_files};
@@ -112,19 +113,21 @@ fn main() {
             state.settings = Some(settings);
             start_backup_thread(&mut state);
         }
-        Err(SettingsError::SError(err_msg)) => {
+        Err(SError(err_msg)) => {
             // Settings could not be loaded
             drop(state);
             fatal_error(main_state.clone(), err_msg);
         }
-        Err(SettingsError::SWarning(settings, warn_msg)) => {
+        Err(SWarning(settings, warn_msg)) => {
             // Settings loaded with error
             state.settings = Some(settings.clone());
             let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
             settings_win.set_settings_to_win(settings);
             settings_win.wind.show();
             state.settings_win = Some(settings_win);
-            message_default(&warn_msg);
+            if !warn_msg.is_empty() {
+                message_default(&warn_msg);
+            }
         }
         Err(SettingsError::SNotFound(Some(settings))) => {
             // A settings file was just created with defaults and needs to be adjusted by the user
@@ -140,7 +143,6 @@ fn main() {
     println!("Got settings");
 
     if state.settings.is_some() {
-        backup_all_changed_files(state.settings.as_ref().unwrap().clone());
         ui_thread_tx.send(UiMessage::RefreshFilesLists);
     }
 
@@ -218,10 +220,12 @@ fn main() {
                                 }
                                 Err(err) => {
                                     match err {
-                                        SettingsError::SWarning(_settings, err_msg) => {
-                                            alert_default(&err_msg);
+                                        SWarning(_settings, err_msg) => {
+                                            if !err_msg.is_empty() {
+                                                alert_default(&err_msg);
+                                            }
                                         }
-                                        SettingsError::SError(err_msg) => {
+                                        SError(err_msg) => {
                                             drop(state);
                                             fatal_error(main_state.clone(), err_msg);
                                         }
