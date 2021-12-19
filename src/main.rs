@@ -46,8 +46,6 @@ pub enum UiMessage {
     SettingsQuit,
     RestoreBackup,
     DeleteBackup,
-    ActivateRedirect,
-    DeactivateRedirect,
     PushStatus(String),
     PopStatus,
     SetStatus(String),
@@ -68,8 +66,6 @@ impl Clone for UiMessage {
             SettingsQuit => SettingsQuit,
             RestoreBackup => RestoreBackup,
             DeleteBackup => DeleteBackup,
-            ActivateRedirect => ActivateRedirect,
-            DeactivateRedirect => DeactivateRedirect,
             SetStatus(status) => SetStatus(status.clone()),
             PushStatus(status) => PushStatus(status.clone()),
             PopStatus => PopStatus,
@@ -270,12 +266,6 @@ fn main() {
                 }
                 DeleteBackup => {
                     println!("Delete Backup");
-                }
-                ActivateRedirect => {
-                    println!("Activate Redirect");
-                }
-                DeactivateRedirect => {
-                    println!("Deactivate Redirect");
                 }
                 PushStatus(status) => {
                     println!("Pushing status message to: {}", &status);

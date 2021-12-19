@@ -19,13 +19,12 @@ pub struct MainWindow {
     status_stack: Vec<String>,
     live_files: MultiBrowser,
     backed_up_files: MultiBrowser,
-    redirect_list: MultiBrowser,
 }
 
 impl MainWindow {
 
     pub fn new(ui_thread_tx: Sender<UiMessage>) -> MainWindow {
-        static WINDOW_SIZE: (i32, i32) = (1024, 715);
+        static WINDOW_SIZE: (i32, i32) = (1024, 800);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
         let mut wind = Window::default().with_label("Valbak");
@@ -50,7 +49,6 @@ impl MainWindow {
 
         let mut live_files;
         let mut backed_up_files;
-        let redirect_list;
 
         let mut content = Pack::default()
             .with_size(CONTENT_SIZE.0, CONTENT_SIZE.1)
@@ -70,14 +68,14 @@ impl MainWindow {
         // Live Files
         win_common::make_section_header("Live Files", true);
         win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
-        live_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 100);
+        live_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 281);
 
         live_files.set_selection_color(Color::White);
 
         // Backed-Up Files
         win_common::make_section_header("Backed-Up Files", true);
         win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
-        backed_up_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 200);
+        backed_up_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 281);
 
         let mut backed_up_files_buttons = Pack::default()
             .with_type(PackType::Horizontal);
@@ -101,34 +99,6 @@ impl MainWindow {
 
         backed_up_files_buttons.end();
 
-        // Redirects
-        static REDIRECT_COLUMN_WIDTHS: [i32; 3] = [(CONTENT_SIZE.0 - 50) / 2, (CONTENT_SIZE.0 - 50) / 2, 50];
-        let redirect_header_texts = vec!["Source Directory", "Destination Directory", "Active"];
-
-        win_common::make_section_header("Redirects", true);
-        win_common::column_headers(&redirect_header_texts, &REDIRECT_COLUMN_WIDTHS);
-        redirect_list = win_common::make_list_browser(&REDIRECT_COLUMN_WIDTHS, 100);
-
-        let mut redirect_list_buttons = Pack::default()
-            .with_type(PackType::Horizontal);
-        redirect_list_buttons.set_spacing(5);
-
-        let mut activate_redirect_button = Button::default()
-            .with_label("Activate");
-        let text_size = activate_redirect_button.measure_label();
-        activate_redirect_button.set_size(text_size.0 + 15, text_size.1 + 10);
-        let mut deactivate_redirect_button = Button::default()
-            .with_label("Deactivate");
-        let text_size = deactivate_redirect_button.measure_label();
-        deactivate_redirect_button.set_size(text_size.0 + 15, text_size.1 + 10);
-
-        activate_redirect_button.emit(ui_thread_tx.clone(), UiMessage::ActivateRedirect);
-        deactivate_redirect_button.emit(ui_thread_tx.clone(), UiMessage::DeactivateRedirect);
-
-        redirect_list_buttons.set_size(0, text_size.1 + 10);
-
-        redirect_list_buttons.end();
-
         content.end();
 
         wind.end();
@@ -145,7 +115,6 @@ impl MainWindow {
             status_stack: Vec::new(),
             live_files,
             backed_up_files,
-            redirect_list,
         }
     }
 
