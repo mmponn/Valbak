@@ -74,6 +74,7 @@ fn backup_thread_main(
     backup_thread_rx: mpsc::Receiver<BackupMessage>,
     ui_thread_tx: app::Sender<UiMessage>
 ) {
+    println!("Backup thread started");
     let mut current_watcher = None;
     let mut current_watcher_thread: Option<JoinHandle<()>> = None;
     let mut current_watcher_thread_tx: Option<mpsc::Sender<DebouncedEvent>> = None;
@@ -105,6 +106,7 @@ fn backup_thread_main(
                         return;
                     }
                     BackupMessage::Run { settings } => {
+                        println!("Starting watcher thread");
                         assert!(current_watcher.is_none(), "illegal state");
 
                         let (watcher_thread_tx, watcher_thread_rx) = mpsc::channel();
@@ -126,7 +128,10 @@ fn backup_thread_main(
                         //TODO dedup directories - multiple patterns will use the same source dir
                         for backup_file_pattern in &settings.backup_paths {
                             new_watcher.watch(&backup_file_pattern.source_dir, RecursiveMode::NonRecursive);
-                            println!("Watching: {}", backup_file_pattern.source_dir.to_str().unwrap());
+                            println!("Watching {} for {}",
+                                backup_file_pattern.source_dir.to_str().unwrap(),
+                                backup_file_pattern.file_pattern.as_str()
+                            );
                         }
 
                         let ui_thread_tx_copy = ui_thread_tx.clone();

@@ -136,7 +136,6 @@ fn main() {
         _ =>
             panic!("illegal state")
     }
-    println!("Got settings");
 
     if state.settings.is_some() {
         ui_thread_tx.send(UiMessage::RefreshFilesLists);
