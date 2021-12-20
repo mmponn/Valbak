@@ -68,14 +68,14 @@ impl MainWindow {
         // Live Files
         win_common::make_section_header("Live Files", true);
         win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
-        live_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 281);
+        live_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 282);
 
         live_files.set_selection_color(Color::White);
 
         // Backed-Up Files
         win_common::make_section_header("Backed-Up Files", true);
         win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
-        backed_up_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 281);
+        backed_up_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 282);
 
         let mut backed_up_files_buttons = Pack::default()
             .with_type(PackType::Horizontal);

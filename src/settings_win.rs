@@ -16,7 +16,7 @@ use thiserror::Error;
 
 use UiMessage::SettingsBackupDestChoose;
 
-use crate::settings::{BackupFilePattern, RedirectFolder, Settings, SETTINGS_VERSION, SettingsError};
+use crate::settings::{BackupFilePattern, Settings, SETTINGS_VERSION, SettingsError};
 use crate::UiMessage;
 use crate::UiMessage::{SettingsOk, SettingsQuit};
 use crate::win_common::{column_headers, make_list_browser, make_section_header};
@@ -38,14 +38,13 @@ pub struct SettingsWindow {
     backup_files_browser: MultiBrowser,
     backup_dest_input: Input,
     backup_count_input: Input,
-    backup_delay_input: Input,
-    redirect_folders_browser: MultiBrowser,
+    backup_delay_input: Input
 }
 
 impl SettingsWindow {
 
     pub fn new(sender: app::Sender<UiMessage>) -> SettingsWindow {
-        static WINDOW_SIZE: (i32, i32) = (800, 610);
+        static WINDOW_SIZE: (i32, i32) = (800, 420);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
         let mut wind = Window::default().with_label("Settings");
@@ -117,36 +116,7 @@ impl SettingsWindow {
         let mut backup_delay_input = Input::default();
         backup_delay_input.set_size(0, backup_delay_input.text_size() + 12);
 
-        static REDIRECT_LIST_COLUMN_WIDTHS: [i32; 2] = [CONTENT_SIZE.0 / 2, CONTENT_SIZE.0 / 2];
-
-        // Live Files
-        make_section_header("Folders to redirect", true);
-        column_headers(
-            &vec!["Folder", "Redirect To"],
-            &REDIRECT_LIST_COLUMN_WIDTHS);
-        let mut redirect_folders_browser = make_list_browser(&REDIRECT_LIST_COLUMN_WIDTHS, 100);
-
-        let mut redirect_buttons = Pack::default()
-            .with_type(PackType::Horizontal);
-        redirect_buttons.set_spacing(5);
-
-        let mut new_redirect_button = Button::default()
-            .with_label("New");
-        let text_size = new_redirect_button.measure_label();
-        new_redirect_button.set_size(text_size.0 + 15, text_size.1 + 10);
-        let mut edit_redirect_button = Button::default()
-            .with_label("Edit");
-        let text_size = edit_redirect_button.measure_label();
-        edit_redirect_button.set_size(text_size.0 + 15, text_size.1 + 10);
-        let mut delete_redirect_button = Button::default()
-            .with_label("Delete");
-        let text_size = delete_redirect_button.measure_label();
-        delete_redirect_button.set_size(text_size.0 + 15, text_size.1 + 10);
-
-        redirect_buttons.set_size(0, text_size.1 + 10);
-
-        redirect_buttons.end();
-        content.set_size(CONTENT_SIZE.0, redirect_buttons.y() + redirect_buttons.height());
+        content.set_size(CONTENT_SIZE.0, backup_delay_input.y() + backup_delay_input.height());
 
         let mut bottom_button_group = Group::default();
 
@@ -183,8 +153,7 @@ impl SettingsWindow {
             backup_files_browser,
             backup_dest_input,
             backup_count_input,
-            backup_delay_input,
-            redirect_folders_browser,
+            backup_delay_input
         }
     }
 
@@ -224,26 +193,12 @@ impl SettingsWindow {
                 )
         };
 
-        let mut redirect_settings = vec![];
-        for i in 1..=self.redirect_folders_browser.size() {
-            let text = self.redirect_folders_browser.text(i);
-            let redirect_folders_line = text.unwrap();
-            let redirect_folders_parts: Vec<&str> = redirect_folders_line.split("|").collect();
-            let redirect_source_path = redirect_folders_parts[0];
-            let redirect_target_path = redirect_folders_parts[1];
-            redirect_settings.push(RedirectFolder {
-                from_dir: PathBuf::from(redirect_source_path),
-                to_dir: PathBuf::from(redirect_target_path)
-            });
-        }
-
         Ok(Settings {
                 settings_version: SETTINGS_VERSION.to_string(),
                 backup_paths: backup_settings,
                 backup_dest_path: PathBuf::from(backup_dest_path),
                 backup_count,
-                backup_delay_sec,
-                redirect_folders: redirect_settings
+                backup_delay_sec
         })
     }
 
@@ -262,14 +217,6 @@ impl SettingsWindow {
         self.backup_count_input.set_value(&settings.backup_count.to_string());
 
         self.backup_delay_input.set_value(&settings.backup_delay_sec.to_string());
-
-        for redirect_folder in settings.redirect_folders {
-            let redirect_path_line = format!("{}|{}",
-                redirect_folder.from_dir.to_str().unwrap(),
-                redirect_folder.to_dir.to_str().unwrap()
-            );
-            self.redirect_folders_browser.add(&redirect_path_line);
-        }
     }
 
     fn clear_win(&mut self) {
@@ -277,9 +224,6 @@ impl SettingsWindow {
             self.backup_files_browser.remove(i);
         }
         self.backup_dest_input.set_value("");
-        for i in (1..=self.redirect_folders_browser.size()).rev() {
-            self.redirect_folders_browser.remove(i);
-        }
     }
 
     pub fn choose_backup_dest_dir(&mut self, mut settings: Settings) {

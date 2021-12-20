@@ -21,7 +21,6 @@ pub struct Settings {
     pub backup_dest_path: PathBuf,
     pub backup_count: u8,
     pub backup_delay_sec: u8,
-    pub redirect_folders: Vec<RedirectFolder>
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -34,12 +33,6 @@ impl BackupFilePattern {
     pub fn to_path(&self) -> PathBuf {
         self.source_dir.join(self.file_pattern.clone())
     }
-}
-
-#[derive(Deserialize, Serialize, Clone, Debug)]
-pub struct RedirectFolder {
-    pub from_dir: PathBuf,
-    pub to_dir: PathBuf
 }
 
 #[derive(Error, Debug)]
@@ -107,18 +100,6 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
         }
     }
 
-    for redirect in settings.redirect_folders.iter() {
-        if !redirect.from_dir.is_dir() {
-            err = Err(
-                format!("Redirect folder does not exist: {}", redirect.to_dir.to_str().unwrap()));
-            break;
-        }
-        if !redirect.to_dir.is_dir() {
-            err = Err(
-                format!("Redirect-to folder does not exist: {}", redirect.to_dir.to_str().unwrap()));
-            break;
-        }
-    }
     if let Err(err_msg) = err {
         return Err(SWarning(settings, err_msg));
     }
@@ -190,9 +171,9 @@ fn get_settings_path() -> Result<PathBuf, SettingsError> {
 pub fn get_default_settings() -> Result<Settings, SettingsError> {
     let mut backup_dest_dir = PathBuf::new();
 
-    let (backup_paths, redirect_paths) = match dirs::data_local_dir() {
+    let backup_paths = match dirs::data_local_dir() {
         None => {
-            (vec![], vec![])
+            vec![]
         }
         Some(local_dir) => {
             let mut local_low_dir = local_dir.to_str().unwrap().to_string();
@@ -225,8 +206,7 @@ pub fn get_default_settings() -> Result<Settings, SettingsError> {
                         source_dir: characters_src_dir.clone(),
                         file_pattern: "*.fch".to_string()
                     }
-                ],
-                vec![]
+                ]
             )
         }
     };
@@ -236,7 +216,6 @@ pub fn get_default_settings() -> Result<Settings, SettingsError> {
         backup_paths,
         backup_dest_path: backup_dest_dir,
         backup_count: 5,
-        backup_delay_sec: 10,
-        redirect_folders: redirect_paths
+        backup_delay_sec: 10
     })
 }
