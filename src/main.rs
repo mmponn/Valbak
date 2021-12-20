@@ -11,7 +11,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use fltk::app;
-use fltk::dialog::{alert_default, FileChooser, FileChooserType, message_default};
+use fltk::dialog::{alert_default, choice_default, FileChooser, FileChooserType, message_default};
 use fltk::enums::Event;
 use fltk::prelude::{WidgetExt, WindowExt};
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
@@ -22,7 +22,7 @@ use settings_win::SettingsWindow;
 use SettingsError::{SError, SWarning};
 use UiMessage::*;
 
-use crate::file::{backup_all_changed_files, clean_backups, get_backed_up_files, get_live_files};
+use crate::file::{backup_all_changed_files, clean_backups, delete_backed_up_files, get_backed_up_files, get_live_files};
 use crate::settings::{get_default_settings, get_settings, Settings, SettingsError, write_settings};
 use crate::settings_win::SettingsWinError;
 use crate::watcher::{BackupMessage, BackupStatus, start_backup_thread, stop_backup_thread};
@@ -265,7 +265,20 @@ fn main() {
                     internal_message_queue.push(UiMessage::RefreshFilesLists);
                 }
                 DeleteBackup => {
-                    println!("Delete Backup");
+                    let mut state = main_state.lock().unwrap();
+                    let selected_backup_paths = state.main_win.get_selected_backed_up_paths();
+                    if !selected_backup_paths.is_empty() {
+                        match choice_default(
+                            format!("Delete {} backup files?", selected_backup_paths.len()).as_str(),
+                            "Yes", "Cancel", ""
+                        ) {
+                            0 => {  // Yes
+                                delete_backed_up_files(selected_backup_paths);
+                            }
+                            _ => ()
+                        }
+                    }
+                    internal_message_queue.push(UiMessage::RefreshFilesLists);
                 }
                 PushStatus(status) => {
                     println!("Pushing status message to: {}", &status);

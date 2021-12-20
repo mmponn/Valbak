@@ -96,12 +96,10 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
                 settings.backup_dest_path.to_str().unwrap()).as_str(),
             "Cancel", "Yes", ""
         ) {
-            0 => {
-                // Cancel
+            0 => {  // Cancel
                 return Err(SWarning(settings, "".to_string()));
             }
-            _ => {
-                // Yes
+            _ => {  // Yes
                 if let Err(err) = std::fs::create_dir_all(settings.backup_dest_path.clone()) {
                     alert_default(format!("Error: {}", err).as_str());
                 }

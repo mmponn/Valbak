@@ -303,6 +303,15 @@ pub fn clean_backups(settings: Settings) {
     }
 }
 
+pub fn delete_backed_up_files(backed_up_files: Vec<PathBuf>) {
+    for backed_up_path in backed_up_files {
+        println!("Deleting backed up file {}", backed_up_path.to_str().unwrap());
+        if let Err(err) = std::fs::remove_file(backed_up_path.clone()) {
+            println!("Error deleting file {}: {}", backed_up_path.to_str().unwrap(), err);
+        }
+    }
+}
+
 pub fn restore_backed_up_files(settings: Settings, selected_backed_up_paths: Vec<PathBuf>) {
     for backed_up_path in selected_backed_up_paths {
         let backed_up_folder_path = backed_up_path.parent().unwrap();
