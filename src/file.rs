@@ -257,7 +257,7 @@ fn get_next_backup_filename(settings: &Settings, unversioned_backed_up_file_path
     )
 }
 
-fn get_history_file_number(history_file: &PathBuf) -> Option<u32> {
+pub fn get_history_file_number(history_file: &PathBuf) -> Option<u32> {
     let history_filename = history_file.file_name().unwrap().to_str().unwrap();
     match history_filename.rfind(".") {
         None =>
@@ -269,6 +269,14 @@ fn get_history_file_number(history_file: &PathBuf) -> Option<u32> {
                 Ok(history_num) => Some(history_num)
             }
         }
+    }
+}
+
+pub fn get_history_file_name(history_file: &PathBuf) -> Option<&str> {
+    let history_filename = history_file.file_name().unwrap().to_str().unwrap();
+    match history_filename.rfind(".") {
+        None => None,
+        Some(dot_index) => Some(&history_filename[..dot_index])
     }
 }
 

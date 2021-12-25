@@ -1,4 +1,4 @@
-use std::cmp::max;
+use std::cmp::Ordering;
 use std::path::PathBuf;
 use std::process::exit;
 
@@ -10,6 +10,7 @@ use fltk::misc::Tooltip;
 use fltk::tree::TreeItemDrawMode::LabelAndWidget;
 
 use crate::{UiMessage, win_common};
+use crate::file::{get_history_file_name, get_history_file_number};
 use crate::UiMessage::{AppQuit, MenuAbout, MenuDocumentation, MenuQuit, MenuSettings};
 use crate::watcher::stop_backup_thread;
 
@@ -176,8 +177,46 @@ impl MainWindow {
     }
 
     pub fn set_backed_up_files_to_win(&mut self, mut backed_up_files: Vec<PathBuf>) {
-        backed_up_files.sort();
-        backed_up_files.reverse();
+        // Sort the backed up files so they are ready to be displayed to the user
+        backed_up_files.sort_by(|a, b| {
+            let backup_number_a = match get_history_file_number(a) {
+                Some(n) => n,
+                None => {
+                    println!("Invalid backup file name {}", b.to_str().unwrap());
+                    return Ordering::Equal;
+                }
+            };
+            let backup_number_b = match get_history_file_number(b) {
+                Some(n) => n,
+                None => {
+                    println!("Invalid backup file name {}", b.to_str().unwrap());
+                    return Ordering::Equal;
+                }
+            };
+            // Reverse number ordering
+            match backup_number_b.cmp(&backup_number_a) {
+                Ordering::Less => Ordering::Less,
+                Ordering::Greater => Ordering::Greater,
+                Ordering::Equal => {
+                    let file_name_a = match get_history_file_name(a) {
+                        Some(n) => n,
+                        None => {
+                            println!("Invalid backup file name {}", b.to_str().unwrap());
+                            return Ordering::Equal;
+                        }
+                    };
+                    let file_name_b = match get_history_file_name(b) {
+                        Some(n) => n,
+                        None => {
+                            println!("Invalid backup file name {}", b.to_str().unwrap());
+                            return Ordering::Equal;
+                        }
+                    };
+                    // Forward filename ordering
+                    file_name_a.cmp(file_name_b)
+                }
+            }
+        });
         self.backed_up_files.clear();
         for backed_up_file in backed_up_files {
             let backed_up_file_metadata = match backed_up_file.metadata() {
