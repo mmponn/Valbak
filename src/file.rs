@@ -17,11 +17,36 @@ use multimap::MultiMap;
 use crate::{AlertQuit, SetStatus, UiMessage};
 use crate::settings::{BackupFilePattern, Settings};
 
+pub trait PathExt {
+    fn file_name_str(&self) -> &str;
+    fn str(&self) -> &str;
+}
+
+impl PathExt for Path {
+    fn file_name_str(&self) -> &str {
+        self.file_name().unwrap().to_str().unwrap()
+    }
+
+    fn str(&self) -> &str {
+        self.to_str().unwrap()
+    }
+}
+
+impl PathExt for PathBuf {
+    fn file_name_str(&self) -> &str {
+        self.file_name().unwrap().to_str().unwrap()
+    }
+
+    fn str(&self) -> &str {
+        self.to_str().unwrap()
+    }
+}
+
 pub fn get_live_files(settings: Settings) -> Vec<PathBuf> {
     let mut live_files = Vec::new();
     for backup_file_pattern in &settings.backup_paths {
         let glob_pattern = backup_file_pattern.source_dir.join(&backup_file_pattern.file_pattern);
-        let glob_paths = match glob(glob_pattern.to_str().unwrap()) {
+        let glob_paths = match glob(glob_pattern.str()) {
             Err(err) =>
                 // This should have already been caught
                 panic!("illegal state: {}", err),
@@ -49,9 +74,9 @@ pub fn get_backed_up_files(settings: Settings) -> Vec<PathBuf> {
             .join(backup_file_folder_name)
             .join(backup_file_pattern_history_pattern);
 
-        let glob_paths = match glob(backed_up_pattern.to_str().unwrap()) {
+        let glob_paths = match glob(backed_up_pattern.str()) {
             Err(err) => {
-                println!("Error scanning backed up files for {}: {}", backed_up_pattern.to_str().unwrap(), err);
+                println!("Error scanning backed up files for {}: {}", backed_up_pattern.str(), err);
                 continue;
             }
             Ok(glob_paths) =>
@@ -111,7 +136,7 @@ pub fn file_has_backup(settings: Settings, backup_file_path: PathBuf) -> Result<
         Some(pattern) => pattern,
         None => {
             let error_msg =
-                format!("Cannot find backup configuration for changed file {}", backup_file_path.to_str().unwrap());
+                format!("Cannot find backup configuration for changed file {}", backup_file_path.str());
             // println!("{}", error_msg);
             // ui_thread_tx.send( SetStatus(error_msg.to_string()));
             return Err(error_msg);
@@ -154,7 +179,7 @@ pub fn file_has_backup(settings: Settings, backup_file_path: PathBuf) -> Result<
         if backed_up_file_metadata.len() == backup_file_metadata.len()
             && backed_up_file_modified == backup_file_modified {
             println!("{} appears to be a copy of {}",
-                backup_file_path.to_str().unwrap(), backed_up_file_path.to_str().unwrap());
+                backup_file_path.str(), backed_up_file_path.str());
             // ui_thread_tx.send(UiMessage::RefreshFilesLists);
             return Ok(true);
         }
@@ -174,13 +199,13 @@ pub fn backup_file(settings: Settings, backup_file_from: PathBuf) {
             return;
         }
     }
-    let backup_file_name = backup_file_from.file_name().unwrap().to_str().unwrap();
+    let backup_file_name = backup_file_from.file_name_str();
     let temp_backup_file_name = "_".to_string() + backup_file_name;
 
     let backup_file_to = backup_file_to_folder.join(backup_file_name);
     let temp_backup_file_to = backup_file_to_folder.join(temp_backup_file_name);
 
-    // ui_thread_tx.send(UiMessage::PushStatus(format!("Copying {}", backup_file_from.to_str().unwrap())));
+    // ui_thread_tx.send(UiMessage::PushStatus(format!("Copying {}", backup_file_from.str())));
     if let Err(err) = std::fs::copy(backup_file_from.clone(), temp_backup_file_to.clone()) {
         println!("Error copying file: {}", err);
         // ui_thread_tx.send(UiMessage::SetStatus(format!("Error: {}", err)));
@@ -200,7 +225,7 @@ pub fn backup_file(settings: Settings, backup_file_from: PathBuf) {
 
     let versioned_backed_up_file_path = get_next_backup_filename(&settings, backup_file_to.clone());
 
-    println!("Copying {} to {}", backup_file_from.to_str().unwrap(), versioned_backed_up_file_path.to_str().unwrap());
+    println!("Copying {} to {}", backup_file_from.str(), versioned_backed_up_file_path.str());
 
     if let Err(err) = std::fs::rename(temp_backup_file_to, versioned_backed_up_file_path) {
         println!("{}", err);
@@ -213,13 +238,13 @@ pub fn backup_file(settings: Settings, backup_file_from: PathBuf) {
 
 fn get_next_backup_filename(settings: &Settings, unversioned_backed_up_file_path: PathBuf) -> PathBuf {
     let backed_up_folder = unversioned_backed_up_file_path.parent().unwrap();
-    let unversioned_filename = unversioned_backed_up_file_path.file_name().unwrap().to_str().unwrap();
+    let unversioned_filename = unversioned_backed_up_file_path.file_name_str();
     let backed_up_history_pattern = backed_up_folder
         .join(unversioned_filename.to_string() + ".*");
-    let backed_up_history_files = match glob(backed_up_history_pattern.to_str().unwrap()) {
+    let backed_up_history_files = match glob(backed_up_history_pattern.str()) {
         Ok(history_paths) => Some(history_paths),
         Err(err) => {
-            println!("Error scanning backed up files for {}: {}", backed_up_history_pattern.to_str().unwrap(), err);
+            println!("Error scanning backed up files for {}: {}", backed_up_history_pattern.str(), err);
             None
         }
     };
@@ -258,7 +283,7 @@ fn get_next_backup_filename(settings: &Settings, unversioned_backed_up_file_path
 }
 
 pub fn get_history_file_number(history_file: &PathBuf) -> Option<u32> {
-    let history_filename = history_file.file_name().unwrap().to_str().unwrap();
+    let history_filename = history_file.file_name_str();
     match history_filename.rfind(".") {
         None =>
             None,
@@ -273,7 +298,7 @@ pub fn get_history_file_number(history_file: &PathBuf) -> Option<u32> {
 }
 
 pub fn get_history_file_name(history_file: &PathBuf) -> Option<&str> {
-    let history_filename = history_file.file_name().unwrap().to_str().unwrap();
+    let history_filename = history_file.file_name_str();
     match history_filename.rfind(".") {
         None => None,
         Some(dot_index) => Some(&history_filename[..dot_index])
@@ -287,7 +312,7 @@ pub fn clean_backups(settings: Settings) {
     for backed_up_file in backed_up_files {
         let history_file_number = get_history_file_number(&backed_up_file).unwrap();
         let history_file_number_str = history_file_number.to_string();
-        let backed_up_file_str = backed_up_file.to_str().unwrap();
+        let backed_up_file_str = backed_up_file.str();
         let stripped_backed_up_file = &backed_up_file_str[..backed_up_file_str.len() - history_file_number_str.len() - 1];
         backed_up_file_paths_by_stripped_file_paths.insert(stripped_backed_up_file.to_string(), backed_up_file);
     }
@@ -302,9 +327,9 @@ pub fn clean_backups(settings: Settings) {
             let doomed_paths = &backed_up_paths[..backed_up_paths.len() - settings.backup_count as usize];
             doomed_paths.iter()
                 .for_each(|path| {
-                    println!("Removing {}", path.to_str().unwrap());
+                    println!("Removing {}", path.str());
                     if let Err(err) = std::fs::remove_file(path) {
-                        println!("Error removing file {}: {}", path.to_str().unwrap(), err);
+                        println!("Error removing file {}: {}", path.str(), err);
                     }
                 });
         }
@@ -313,9 +338,9 @@ pub fn clean_backups(settings: Settings) {
 
 pub fn delete_backed_up_files(backed_up_files: Vec<PathBuf>) {
     for backed_up_path in backed_up_files {
-        println!("Deleting backed up file {}", backed_up_path.to_str().unwrap());
+        println!("Deleting backed up file {}", backed_up_path.str());
         if let Err(err) = std::fs::remove_file(backed_up_path.clone()) {
-            println!("Error deleting file {}: {}", backed_up_path.to_str().unwrap(), err);
+            println!("Error deleting file {}: {}", backed_up_path.str(), err);
         }
     }
 }
@@ -327,11 +352,11 @@ pub fn restore_backed_up_files(settings: Settings, selected_backed_up_paths: Vec
         let source_file_path = match get_source_file_for_backed_up_file(settings.clone(), backed_up_path.clone()) {
             Ok(path) => path,
             Err(err) => {
-                println!("{}: {}", backed_up_path.to_str().unwrap(), err);
+                println!("{}: {}", backed_up_path.str(), err);
                 continue;
             }
         };
-        let source_filename = source_file_path.file_name().unwrap().to_str().unwrap();
+        let source_filename = source_file_path.file_name_str();
 
         let temp_source_filename = "_".to_string() + source_filename;
         let temp_source_file_path = backed_up_folder_path.join(temp_source_filename);
@@ -339,7 +364,7 @@ pub fn restore_backed_up_files(settings: Settings, selected_backed_up_paths: Vec
         let (backed_up_file_metadata, backup_file_modified) = match get_file_metadata(backed_up_path.clone()) {
             Ok((metadata, modified)) => (metadata, modified),
             Err(err) => {
-                println!("{}: {}", backed_up_path.to_str().unwrap(), err);
+                println!("{}: {}", backed_up_path.str(), err);
                 continue;
             }
         };
@@ -347,21 +372,21 @@ pub fn restore_backed_up_files(settings: Settings, selected_backed_up_paths: Vec
 
         if let Err(err) = std::fs::copy(backed_up_path.clone(), temp_source_file_path.clone()) {
             println!("Error copying file from {} to {}: {}",
-                backed_up_path.to_str().unwrap(), temp_source_file_path.to_str().unwrap(), err);
+                backed_up_path.str(), temp_source_file_path.str(), err);
             continue;
         }
 
         if let Err(err) = set_file_mtime(temp_source_file_path.clone(), backed_up_file_modified_filetime) {
-            println!("{}: {}", temp_source_file_path.to_str().unwrap(), err);
+            println!("{}: {}", temp_source_file_path.str(), err);
             continue;
         }
 
         if let Err(err) = std::fs::rename(temp_source_file_path.clone(), source_file_path.clone()) {
-            println!("{}: {}", temp_source_file_path.to_str().unwrap(), err);
+            println!("{}: {}", temp_source_file_path.str(), err);
             continue;
         }
 
-        println!("Restored {}", source_file_path.to_str().unwrap());
+        println!("Restored {}", source_file_path.str());
     }
 }
 
@@ -379,9 +404,9 @@ pub fn get_backed_up_file_paths(
 
     // 2. Get a list of all files matching the pattern
 
-    let glob_paths = match glob(backed_up_pattern.to_str().unwrap()) {
+    let glob_paths = match glob(backed_up_pattern.str()) {
         Err(err) => {
-            return Err(format!("Error scanning backed up files for {}: {}", backed_up_pattern.to_str().unwrap(), err));
+            return Err(format!("Error scanning backed up files for {}: {}", backed_up_pattern.str(), err));
         }
         Ok(glob_paths) =>
             glob_paths
@@ -393,7 +418,7 @@ pub fn get_backed_up_file_paths(
     for glob_path in glob_paths {
         let glob_path = match glob_path {
             Err(err) =>
-                return Err(format!("Error scanning backed up files for {}: {}", backed_up_pattern.to_str().unwrap(), err)),
+                return Err(format!("Error scanning backed up files for {}: {}", backed_up_pattern.str(), err)),
             Ok(glob_path) =>
                 backed_up_file_paths.push(glob_path)
         };
@@ -406,7 +431,7 @@ fn get_source_file_for_backed_up_file(settings: Settings, backed_up_file: PathBu
     let backed_up_file_folder_name = backed_up_file.parent().unwrap().file_name().unwrap();
 
     // Strip off the numeric suffix from the backed up filename
-    let backed_up_file_name = backed_up_file.file_name().unwrap().to_str().unwrap();
+    let backed_up_file_name = backed_up_file.file_name_str();
     let backed_up_file_name_index = match backed_up_file_name.rfind(".") {
         Some(i) => i,
         None =>
@@ -419,10 +444,10 @@ fn get_source_file_for_backed_up_file(settings: Settings, backed_up_file: PathBu
         let backup_file_pattern_folder_name = backup_file_pattern_path.parent().unwrap().file_name().unwrap();
 
         if backup_file_pattern_folder_name == backed_up_file_folder_name {
-            let file_pattern = match Pattern::new(backup_file_pattern_path.to_str().unwrap()) {
+            let file_pattern = match Pattern::new(backup_file_pattern_path.str()) {
                 Ok(pattern) => pattern,
                 Err(err) =>
-                    return Err(format!("invalid file pattern \"{}\": {}", backup_file_pattern_path.to_str().unwrap(), err))
+                    return Err(format!("invalid file pattern \"{}\": {}", backup_file_pattern_path.str(), err))
             };
 
             // The file name of the backed up file grafted onto the source path
@@ -435,7 +460,7 @@ fn get_source_file_for_backed_up_file(settings: Settings, backed_up_file: PathBu
         }
     }
 
-    Err(format!("Failed to find source file for backed up file {}", backed_up_file.to_str().unwrap()))
+    Err(format!("Failed to find source file for backed up file {}", backed_up_file.str()))
 }
 
 pub fn get_file_metadata(file_path: PathBuf ) -> Result<(Metadata, SystemTime), String> {
@@ -443,7 +468,7 @@ pub fn get_file_metadata(file_path: PathBuf ) -> Result<(Metadata, SystemTime), 
         Err(err) => {
             let error_msg =
                 format!("Cannot read metadata for changed file {}: {}",
-                    file_path.to_str().unwrap(), err
+                    file_path.str(), err
                 ).to_string();
             return Err(error_msg);
         }
@@ -452,7 +477,7 @@ pub fn get_file_metadata(file_path: PathBuf ) -> Result<(Metadata, SystemTime), 
                 Err(err) => {
                     let error_msg =
                         format!("Cannot read metadata for changed file {}: {}",
-                            file_path.to_str().unwrap(), err
+                            file_path.str(), err
                         ).to_string();
                     return Err(error_msg);
                 }

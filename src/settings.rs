@@ -10,6 +10,7 @@ use glob::{glob, Pattern};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::file::PathExt;
 use crate::settings::SettingsError::{SError, SNotFound, SWarning};
 
 pub const SETTINGS_VERSION: &str = "1";
@@ -68,7 +69,7 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
     for backup in settings.backup_paths.iter() {
         if !backup.source_dir.is_dir() {
             err = Err(
-                format!("Backup folder does not exist: {}", backup.source_dir.to_str().unwrap()));
+                format!("Backup folder does not exist: {}", backup.source_dir.str()));
             break;
         }
         if let Err(_) = Pattern::new(&backup.file_pattern) {
@@ -86,7 +87,7 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
     if settings.backup_dest_path != PathBuf::new() && !settings.backup_dest_path.is_dir() {
         match choice_default(
             format!("Destination folder does not exist: {}\nCreate it?",
-                settings.backup_dest_path.to_str().unwrap()).as_str(),
+                settings.backup_dest_path.str()).as_str(),
             "Cancel", "Yes", ""
         ) {
             0 => {  // Cancel
@@ -135,7 +136,7 @@ pub fn write_settings(settings: Settings) -> Result<Settings, SettingsError> {
     if let Err(err) = std::fs::create_dir_all(settings_dir_path) {
         if err.kind() != ErrorKind::AlreadyExists {
             let err_msg = format!("Error creating settings directory {}: {}",
-                settings_dir_path.to_str().unwrap(), err);
+                settings_dir_path.str(), err);
             println!("{}", err_msg);
             return Err(SWarning(settings, err_msg));
         }
@@ -176,7 +177,7 @@ pub fn get_default_settings() -> Result<Settings, SettingsError> {
             vec![]
         }
         Some(local_dir) => {
-            let mut local_low_dir = local_dir.to_str().unwrap().to_string();
+            let mut local_low_dir = local_dir.str().to_string();
             local_low_dir.push_str("Low");
 
             let valheim_src_dir = Path::new(&local_low_dir)
@@ -195,7 +196,7 @@ pub fn get_default_settings() -> Result<Settings, SettingsError> {
                 vec![
                     BackupFilePattern {
                         source_dir: worlds_src_dir.clone(),
-                        // dest_dir: worlds_dest_dir.to_str().unwrap().to_string(),
+                        // dest_dir: worlds_dest_dir.str().to_string(),
                         file_pattern: "*.db".to_string()
                     },
                     BackupFilePattern {

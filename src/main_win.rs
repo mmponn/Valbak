@@ -10,7 +10,7 @@ use fltk::misc::Tooltip;
 use fltk::tree::TreeItemDrawMode::LabelAndWidget;
 
 use crate::{UiMessage, win_common};
-use crate::file::{get_history_file_name, get_history_file_number};
+use crate::file::{get_history_file_name, get_history_file_number, PathExt};
 use crate::UiMessage::{AppQuit, MenuAbout, MenuDocumentation, MenuQuit, MenuSettings};
 use crate::watcher::stop_backup_thread;
 
@@ -145,7 +145,7 @@ impl MainWindow {
         for live_file in live_files {
             let live_file_metadata = match live_file.metadata() {
                 Err(err) => {
-                    println!("Error reading file metadata for {}: {}", live_file.to_str().unwrap(), err);
+                    println!("Error reading file metadata for {}: {}", live_file.str(), err);
                     continue;
                 }
                 Ok(metadata) =>
@@ -153,7 +153,7 @@ impl MainWindow {
             };
             let live_file_modified = match live_file_metadata.modified() {
                 Err(err) => {
-                    println!("Error reading file modified time for {}: {}", live_file.to_str().unwrap(), err);
+                    println!("Error reading file modified time for {}: {}", live_file.str(), err);
                     continue;
                 }
                 Ok(modified) =>
@@ -168,7 +168,7 @@ impl MainWindow {
                 live_file_size = (live_file_metadata.len() / 1000).to_string() + "kb";
             }
             let live_file_line = format!("{}|{}|{}",
-                live_file.to_str().unwrap(),
+                live_file.str(),
                 live_file_modified.format("%m/%d/%Y %T"),
                 live_file_size
             );
@@ -182,14 +182,14 @@ impl MainWindow {
             let backup_number_a = match get_history_file_number(a) {
                 Some(n) => n,
                 None => {
-                    println!("Invalid backup file name {}", b.to_str().unwrap());
+                    println!("Invalid backup file name {}", b.str());
                     return Ordering::Equal;
                 }
             };
             let backup_number_b = match get_history_file_number(b) {
                 Some(n) => n,
                 None => {
-                    println!("Invalid backup file name {}", b.to_str().unwrap());
+                    println!("Invalid backup file name {}", b.str());
                     return Ordering::Equal;
                 }
             };
@@ -201,14 +201,14 @@ impl MainWindow {
                     let file_name_a = match get_history_file_name(a) {
                         Some(n) => n,
                         None => {
-                            println!("Invalid backup file name {}", b.to_str().unwrap());
+                            println!("Invalid backup file name {}", b.str());
                             return Ordering::Equal;
                         }
                     };
                     let file_name_b = match get_history_file_name(b) {
                         Some(n) => n,
                         None => {
-                            println!("Invalid backup file name {}", b.to_str().unwrap());
+                            println!("Invalid backup file name {}", b.str());
                             return Ordering::Equal;
                         }
                     };
@@ -221,7 +221,7 @@ impl MainWindow {
         for backed_up_file in backed_up_files {
             let backed_up_file_metadata = match backed_up_file.metadata() {
                 Err(err) => {
-                    println!("Error reading file metadata for {}: {}", backed_up_file.to_str().unwrap(), err);
+                    println!("Error reading file metadata for {}: {}", backed_up_file.str(), err);
                     continue;
                 }
                 Ok(metadata) =>
@@ -229,7 +229,7 @@ impl MainWindow {
             };
             let backed_up_file_modified = match backed_up_file_metadata.modified() {
                 Err(err) => {
-                    println!("Error reading file modified time for {}: {}", backed_up_file.to_str().unwrap(), err);
+                    println!("Error reading file modified time for {}: {}", backed_up_file.str(), err);
                     continue;
                 }
                 Ok(modified) =>
@@ -244,7 +244,7 @@ impl MainWindow {
                 backed_up_file_size = (backed_up_file_metadata.len() / 1000).to_string() + "kb";
             }
             let backed_up_file_line = format!("{}|{}|{}",
-                backed_up_file.to_str().unwrap(),
+                backed_up_file.str(),
                 backed_up_file_modified.format("%m/%d/%Y %T"),
                 backed_up_file_size
             );

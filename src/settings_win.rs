@@ -16,6 +16,7 @@ use thiserror::Error;
 
 use UiMessage::SettingsBackupDestChoose;
 
+use crate::file::PathExt;
 use crate::settings::{BackupFilePattern, Settings, SETTINGS_VERSION, SettingsError};
 use crate::UiMessage;
 use crate::UiMessage::{SettingsOk, SettingsQuit};
@@ -206,13 +207,13 @@ impl SettingsWindow {
         self.clear_win();
         for backup_file_pattern in settings.backup_paths {
             let backup_file_line = format!("{}|{}",
-                backup_file_pattern.source_dir.to_str().unwrap(),
+                backup_file_pattern.source_dir.str(),
                 backup_file_pattern.file_pattern
             );
             self.backup_files_browser.add(&backup_file_line);
         }
 
-        self.backup_dest_input.set_value(settings.backup_dest_path.to_str().unwrap());
+        self.backup_dest_input.set_value(settings.backup_dest_path.str());
 
         self.backup_count_input.set_value(&settings.backup_count.to_string());
 
@@ -228,7 +229,7 @@ impl SettingsWindow {
 
     pub fn choose_backup_dest_dir(&mut self, mut settings: Settings) {
         let mut file_chooser =
-            FileChooser::new(settings.backup_dest_path.to_str().unwrap(),
+            FileChooser::new(settings.backup_dest_path.str(),
                              "",
                              FileChooserType::Single | FileChooserType::Directory,
                              "Choose backup destination folder");

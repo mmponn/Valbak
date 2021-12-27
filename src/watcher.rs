@@ -17,7 +17,7 @@ use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
 use crate::{AlertQuit, MainState, PushStatus, SetStatus, UiMessage};
-use crate::file::{backup_file, clean_backups, file_has_backup, get_backed_up_file_paths, get_file_metadata};
+use crate::file::{backup_file, clean_backups, file_has_backup, get_backed_up_file_paths, get_file_metadata, PathExt};
 use crate::settings::{BackupFilePattern, Settings};
 
 const STOP_WATCHER_ERROR: &str = "STOP";
@@ -129,7 +129,7 @@ fn backup_thread_main(
                         for backup_file_pattern in &settings.backup_paths {
                             new_watcher.watch(&backup_file_pattern.source_dir, RecursiveMode::NonRecursive);
                             println!("Watching {} for {}",
-                                backup_file_pattern.source_dir.to_str().unwrap(),
+                                backup_file_pattern.source_dir.str(),
                                 backup_file_pattern.file_pattern.as_str()
                             );
                         }
@@ -194,7 +194,7 @@ fn on_file_change( backup_file_path: PathBuf, settings: &Settings, ui_thread_tx:
     let file_has_backup = match file_has_backup(settings.clone(), backup_file_path.clone()) {
         Ok(has_backup) => has_backup,
         Err(err) => {
-            println!("{}: {}", backup_file_path.to_str().unwrap(), err);
+            println!("{}: {}", backup_file_path.str(), err);
             return;
         }
     };
