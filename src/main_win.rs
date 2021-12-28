@@ -1,18 +1,14 @@
 use std::cmp::Ordering;
 use std::path::PathBuf;
-use std::process::exit;
 
 use chrono::{DateTime, Local};
-use fltk::{app::*, app, browser::*, button::*, enums::*, group::*, input::*, prelude::*, window::*};
+use fltk::{app::*, app, browser::*, button::*, enums::*, group::*, prelude::*, window::*};
 use fltk::frame::Frame;
 use fltk::menu::{MenuBar, MenuFlag};
-use fltk::misc::Tooltip;
-use fltk::tree::TreeItemDrawMode::LabelAndWidget;
 
 use crate::{UiMessage, win_common};
-use crate::file::{get_history_file_name, get_history_file_number, PathExt};
+use crate::file::{get_backed_up_filename, get_backed_up_version_number, PathExt};
 use crate::UiMessage::{AppQuit, MenuAbout, MenuDocumentation, MenuQuit, MenuSettings};
-use crate::watcher::stop_backup_thread;
 
 pub struct MainWindow {
     pub wind: DoubleWindow,
@@ -49,7 +45,7 @@ impl MainWindow {
             move |_menu_bar| sender_copy.send(MenuAbout));
 
         let mut live_files;
-        let mut backed_up_files;
+        let backed_up_files;
 
         let mut content = Pack::default()
             .with_size(CONTENT_SIZE.0, CONTENT_SIZE.1)
@@ -69,14 +65,14 @@ impl MainWindow {
         // Live Files
         win_common::make_section_header("Live Files", true);
         win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
-        live_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 282);
+        live_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 242);
 
         live_files.set_selection_color(Color::White);
 
         // Backed-Up Files
         win_common::make_section_header("Backed-Up Files", true);
         win_common::column_headers(&file_header_texts, &FILE_LIST_COLUMN_WIDTHS);
-        backed_up_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 282);
+        backed_up_files = win_common::make_list_browser(&FILE_LIST_COLUMN_WIDTHS, 322);
 
         let mut backed_up_files_buttons = Pack::default()
             .with_type(PackType::Horizontal);
@@ -160,7 +156,7 @@ impl MainWindow {
                     modified
             };
             let live_file_modified: DateTime<Local> = live_file_modified.into();
-            let mut live_file_size_mb = live_file_metadata.len() / (1000 * 1000);
+            let live_file_size_mb = live_file_metadata.len() / (1000 * 1000);
             let live_file_size;
             if live_file_size_mb > 0 {
                 live_file_size = live_file_size_mb.to_string() + "mb";
@@ -179,14 +175,14 @@ impl MainWindow {
     pub fn set_backed_up_files_to_win(&mut self, mut backed_up_files: Vec<PathBuf>) {
         // Sort the backed up files so they are ready to be displayed to the user
         backed_up_files.sort_by(|a, b| {
-            let backup_number_a = match get_history_file_number(a) {
+            let backup_number_a = match get_backed_up_version_number(a) {
                 Some(n) => n,
                 None => {
                     println!("Invalid backup file name {}", b.str());
                     return Ordering::Equal;
                 }
             };
-            let backup_number_b = match get_history_file_number(b) {
+            let backup_number_b = match get_backed_up_version_number(b) {
                 Some(n) => n,
                 None => {
                     println!("Invalid backup file name {}", b.str());
@@ -198,14 +194,14 @@ impl MainWindow {
                 Ordering::Less => Ordering::Less,
                 Ordering::Greater => Ordering::Greater,
                 Ordering::Equal => {
-                    let file_name_a = match get_history_file_name(a) {
+                    let filename_a = match get_backed_up_filename(a) {
                         Some(n) => n,
                         None => {
                             println!("Invalid backup file name {}", b.str());
                             return Ordering::Equal;
                         }
                     };
-                    let file_name_b = match get_history_file_name(b) {
+                    let filename_b = match get_backed_up_filename(b) {
                         Some(n) => n,
                         None => {
                             println!("Invalid backup file name {}", b.str());
@@ -213,7 +209,7 @@ impl MainWindow {
                         }
                     };
                     // Forward filename ordering
-                    file_name_a.cmp(file_name_b)
+                    filename_a.cmp(filename_b)
                 }
             }
         });
@@ -236,7 +232,7 @@ impl MainWindow {
                     modified
             };
             let backed_up_file_modified: DateTime<Local> = backed_up_file_modified.into();
-            let mut backed_up_file_size_mb = backed_up_file_metadata.len() / (1000 * 1000);
+            let backed_up_file_size_mb = backed_up_file_metadata.len() / (1000 * 1000);
             let backed_up_file_size;
             if backed_up_file_size_mb > 0 {
                 backed_up_file_size = backed_up_file_size_mb.to_string() + "mb";

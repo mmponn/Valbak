@@ -1,24 +1,16 @@
-use std::cell::RefCell;
-use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::fs::Metadata;
 use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::{Arc, mpsc, Mutex, MutexGuard};
-use std::sync::mpsc::RecvTimeoutError;
+use std::sync::mpsc;
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime};
+use std::time::Duration;
 
-use chrono::{DateTime, Local};
 use fltk::app;
-use fltk::prelude::WidgetExt;
-use glob::{GlobResult, Paths, Pattern, PatternError};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
-use crate::{AlertQuit, MainState, PushStatus, SetStatus, UiMessage};
-use crate::file::{backup_file, clean_backups, file_has_backup, get_backed_up_file_paths, get_file_metadata, PathExt};
-use crate::settings::{BackupFilePattern, Settings};
+use crate::{MainState, UiMessage};
+use crate::file::{back_up_live_file, delete_old_backups, live_file_has_backup, PathExt};
+use crate::settings::Settings;
 
 const STOP_WATCHER_ERROR: &str = "STOP";
 
@@ -35,7 +27,7 @@ pub enum BackupStatus {
 }
 
 impl Display for BackupStatus {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
         todo!()
     }
 }
@@ -53,10 +45,13 @@ pub fn start_backup_thread(state: &mut MainState) {
             move || backup_thread_main(backup_message_rx, ui_thread_tx_copy))
     );
 
-    state.backup_thread_tx.as_ref().unwrap().send(
+    if let Err(err) = state.backup_thread_tx.as_ref().unwrap().send(
         BackupMessage::Run {
             settings: state.settings.clone().unwrap()
-        });
+        }
+    ) {
+        panic!("Error sending run message to backup thread: {}", err);
+    }
 }
 
 pub fn stop_backup_thread(state: &mut MainState) -> JoinHandle<()> {
@@ -64,7 +59,9 @@ pub fn stop_backup_thread(state: &mut MainState) -> JoinHandle<()> {
     assert!(state.backup_thread.is_some(), "illegal state");
     assert!(state.backup_thread_tx.is_some(), "illegal state");
 
-    state.backup_thread_tx.as_ref().unwrap().send(BackupMessage::Stop {});
+    if let Err(err) = state.backup_thread_tx.as_ref().unwrap().send(BackupMessage::Stop {}) {
+        panic!("Error sending stop message to backup thread: {}", err);
+    }
     let mut backup_thread = None;
     std::mem::swap(&mut backup_thread, &mut state.backup_thread);
     backup_thread.unwrap()
@@ -93,13 +90,18 @@ fn backup_thread_main(
                     BackupMessage::Stop {} => {
                         println!("Stopping backup thread");
                         if current_watcher_thread_tx.is_some() {
-                            current_watcher_thread_tx.unwrap().send(
+                            if let Err(err) = current_watcher_thread_tx.unwrap().send(
                                 DebouncedEvent::Error(
                                     notify::Error::Generic(STOP_WATCHER_ERROR.to_string()),
-                                    None));
+                                    None)
+                            ) {
+                                panic!("Error sending stop message to watcher thread: {}", err);
+                            }
                         }
                         if current_watcher_thread.is_some() {
-                            current_watcher_thread.unwrap().join();
+                            if let Err(err) = current_watcher_thread.unwrap().join() {
+                                panic!("Panic from watcher thread: {:?}", err);
+                            }
                         }
                         ui_thread_tx.send(UiMessage::SetStatus("Stopped".to_string()));
                         println!("Backup thread stopped");
@@ -126,11 +128,13 @@ fn backup_thread_main(
                         let mut new_watcher: RecommendedWatcher = new_watcher.unwrap();
 
                         //TODO dedup directories - multiple patterns will use the same source dir
-                        for backup_file_pattern in &settings.backup_paths {
-                            new_watcher.watch(&backup_file_pattern.source_dir, RecursiveMode::NonRecursive);
+                        for backup_pattern in &settings.backup_patterns {
+                            if let Err(err) = new_watcher.watch(&backup_pattern.source_dir, RecursiveMode::NonRecursive) {
+                                panic!("Error watching directory {}: {}", backup_pattern.source_dir.str(), err);
+                            }
                             println!("Watching {} for {}",
-                                backup_file_pattern.source_dir.str(),
-                                backup_file_pattern.file_pattern.as_str()
+                                backup_pattern.source_dir.str(),
+                                backup_pattern.filename_pattern.as_str()
                             );
                         }
 
@@ -191,7 +195,7 @@ fn watcher_thread_main(settings: Settings, watcher_thread_rx: mpsc::Receiver<Deb
 }
 
 fn on_file_change( backup_file_path: PathBuf, settings: &Settings, ui_thread_tx: app::Sender<UiMessage> ) {
-    let file_has_backup = match file_has_backup(settings.clone(), backup_file_path.clone()) {
+    let file_has_backup = match live_file_has_backup(settings.clone(), backup_file_path.clone()) {
         Ok(has_backup) => has_backup,
         Err(err) => {
             println!("{}: {}", backup_file_path.str(), err);
@@ -199,8 +203,8 @@ fn on_file_change( backup_file_path: PathBuf, settings: &Settings, ui_thread_tx:
         }
     };
     if !file_has_backup {
-        backup_file(settings.clone(), backup_file_path.clone());
-        clean_backups(settings.clone());
+        back_up_live_file(settings.clone(), backup_file_path.clone());
+        delete_old_backups(settings.clone());
         ui_thread_tx.send(UiMessage::RefreshFilesLists);
     }
 }

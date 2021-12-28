@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
 use fltk::dialog::{alert_default, choice_default};
-use glob::{glob, Pattern};
+use glob::Pattern;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -18,7 +18,7 @@ pub const SETTINGS_VERSION: &str = "1";
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Settings {
     pub settings_version: String,
-    pub backup_paths: Vec<BackupFilePattern>,
+    pub backup_patterns: Vec<BackupFilePattern>,
     pub backup_dest_path: PathBuf,
     pub backup_count: u8,
     pub backup_delay_sec: u8,
@@ -27,12 +27,12 @@ pub struct Settings {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct BackupFilePattern {
     pub source_dir: PathBuf,
-    pub file_pattern: String
+    pub filename_pattern: String
 }
 
 impl BackupFilePattern {
     pub fn to_path(&self) -> PathBuf {
-        self.source_dir.join(self.file_pattern.clone())
+        self.source_dir.join(self.filename_pattern.clone())
     }
 }
 
@@ -44,7 +44,7 @@ pub enum SettingsError {
 }
 
 impl Display for SettingsError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
         todo!()
     }
 }
@@ -66,21 +66,21 @@ pub fn get_settings() -> Result<Settings, SettingsError> {
 
 pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> {
     let mut err = Ok(());
-    for backup in settings.backup_paths.iter() {
-        if !backup.source_dir.is_dir() {
+    for backup_pattern in settings.backup_patterns.iter() {
+        if !backup_pattern.source_dir.is_dir() {
             err = Err(
-                format!("Backup folder does not exist: {}", backup.source_dir.str()));
+                format!("Backup folder does not exist: {}", backup_pattern.source_dir.str()));
             break;
         }
-        if let Err(_) = Pattern::new(&backup.file_pattern) {
-            err = Err(format!("Invalid file pattern: {}", backup.file_pattern));
+        if let Err(_) = Pattern::new(&backup_pattern.filename_pattern) {
+            err = Err(format!("Invalid file pattern: {}", backup_pattern.filename_pattern));
         }
     }
     if let Err(err_msg) = err {
         return Err(SWarning(settings, err_msg));
     }
 
-    if !settings.backup_paths.is_empty() && settings.backup_dest_path == PathBuf::new() {
+    if !settings.backup_patterns.is_empty() && settings.backup_dest_path == PathBuf::new() {
         let err_msg = "Missing destination folder".to_string();
         return Err(SWarning(settings, err_msg));
     }
@@ -172,7 +172,7 @@ fn get_settings_path() -> Result<PathBuf, SettingsError> {
 pub fn get_default_settings() -> Result<Settings, SettingsError> {
     let mut backup_dest_dir = PathBuf::new();
 
-    let backup_paths = match dirs::data_local_dir() {
+    let backup_patterns = match dirs::data_local_dir() {
         None => {
             vec![]
         }
@@ -192,29 +192,27 @@ pub fn get_default_settings() -> Result<Settings, SettingsError> {
             };
             backup_dest_dir.push("Valbak");
 
-            (
-                vec![
-                    BackupFilePattern {
-                        source_dir: worlds_src_dir.clone(),
-                        // dest_dir: worlds_dest_dir.str().to_string(),
-                        file_pattern: "*.db".to_string()
-                    },
-                    BackupFilePattern {
-                        source_dir: worlds_src_dir.clone(),
-                        file_pattern: "*.fwl".to_string()
-                    },
-                    BackupFilePattern {
-                        source_dir: characters_src_dir.clone(),
-                        file_pattern: "*.fch".to_string()
-                    }
-                ]
-            )
+            vec![
+                BackupFilePattern {
+                    source_dir: worlds_src_dir.clone(),
+                    // dest_dir: worlds_dest_dir.str().to_string(),
+                    filename_pattern: "*.db".to_string()
+                },
+                BackupFilePattern {
+                    source_dir: worlds_src_dir.clone(),
+                    filename_pattern: "*.fwl".to_string()
+                },
+                BackupFilePattern {
+                    source_dir: characters_src_dir.clone(),
+                    filename_pattern: "*.fch".to_string()
+                }
+            ]
         }
     };
 
     Ok(Settings {
         settings_version: SETTINGS_VERSION.to_string(),
-        backup_paths,
+        backup_patterns,
         backup_dest_path: backup_dest_dir,
         backup_count: 5,
         backup_delay_sec: 10

@@ -5,19 +5,17 @@ use fltk::app;
 use fltk::browser::MultiBrowser;
 use fltk::button::Button;
 use fltk::dialog::{FileChooser, FileChooserType};
-use fltk::enums::{Align, Event, FrameType};
-use fltk::frame::Frame;
+use fltk::enums::Event;
 use fltk::group::{Group, Pack, PackType};
-use fltk::input::{FileInput, Input};
-use fltk::prelude::{BrowserExt, GroupExt, InputExt, WidgetBase, WidgetExt, WindowExt};
-use fltk::widget::Widget;
+use fltk::input::Input;
+use fltk::prelude::{BrowserExt, GroupExt, InputExt, WidgetExt, WindowExt};
 use fltk::window::Window;
 use thiserror::Error;
 
 use UiMessage::SettingsBackupDestChoose;
 
 use crate::file::PathExt;
-use crate::settings::{BackupFilePattern, Settings, SETTINGS_VERSION, SettingsError};
+use crate::settings::{BackupFilePattern, Settings, SETTINGS_VERSION};
 use crate::UiMessage;
 use crate::UiMessage::{SettingsOk, SettingsQuit};
 use crate::win_common::{column_headers, make_list_browser, make_section_header};
@@ -29,7 +27,7 @@ pub enum SettingsWinError {
 }
 
 impl Display for SettingsWinError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
         todo!()
     }
 }
@@ -62,7 +60,7 @@ impl SettingsWindow {
         column_headers(
             &vec!["Folder", "File Pattern"],
             &BACKUP_LIST_COLUMN_WIDTHS);
-        let mut backup_files_browser = make_list_browser(&BACKUP_LIST_COLUMN_WIDTHS, 100);
+        let backup_files_browser = make_list_browser(&BACKUP_LIST_COLUMN_WIDTHS, 100);
 
         let mut backup_files_buttons = Pack::default()
             .with_type(PackType::Horizontal);
@@ -159,16 +157,16 @@ impl SettingsWindow {
     }
 
     pub fn get_settings_from_win(&self) -> Result<Settings, SettingsWinError> {
-        let mut backup_settings = vec![];
+        let mut backup_patterns = vec![];
         for i in 1..=self.backup_files_browser.size() {
             let text = self.backup_files_browser.text(i);
             let backup_files_line = text.unwrap();
             let backup_files_parts: Vec<&str> = backup_files_line.split("|").collect();
             let backup_source_path = backup_files_parts[0];
             let backup_files_glob = backup_files_parts[1];
-            backup_settings.push(BackupFilePattern {
+            backup_patterns.push(BackupFilePattern {
                 source_dir: PathBuf::from(backup_source_path),
-                file_pattern: backup_files_glob.to_string()
+                filename_pattern: backup_files_glob.to_string()
             });
         }
 
@@ -178,7 +176,7 @@ impl SettingsWindow {
         let backup_count = match backup_count.parse::<u8>() {
             Ok(count) =>
                 count,
-            Err(err) =>
+            Err(_err) =>
                 return Err(
                     SettingsWinError::SwWarning(format!("Invalid backup count: {}", backup_count))
                 )
@@ -188,7 +186,7 @@ impl SettingsWindow {
         let backup_delay_sec = match backup_delay_sec.parse::<u8>() {
             Ok(delay_sec) =>
                 delay_sec,
-            Err(err) =>
+            Err(_err) =>
                 return Err(
                     SettingsWinError::SwWarning(format!("Invalid delay seconds: {}", backup_delay_sec))
                 )
@@ -196,7 +194,7 @@ impl SettingsWindow {
 
         Ok(Settings {
                 settings_version: SETTINGS_VERSION.to_string(),
-                backup_paths: backup_settings,
+                backup_patterns,
                 backup_dest_path: PathBuf::from(backup_dest_path),
                 backup_count,
                 backup_delay_sec
@@ -205,10 +203,10 @@ impl SettingsWindow {
 
     pub fn set_settings_to_win(&mut self, settings: Settings) {
         self.clear_win();
-        for backup_file_pattern in settings.backup_paths {
+        for backup_pattern in settings.backup_patterns {
             let backup_file_line = format!("{}|{}",
-                backup_file_pattern.source_dir.str(),
-                backup_file_pattern.file_pattern
+                backup_pattern.source_dir.str(),
+                backup_pattern.filename_pattern
             );
             self.backup_files_browser.add(&backup_file_line);
         }

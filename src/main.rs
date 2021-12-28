@@ -1,29 +1,18 @@
-use std::borrow::Borrow;
-use std::cell::RefCell;
-use std::error::Error;
-use std::ops::Deref;
-use std::path::PathBuf;
 use std::process::exit;
-use std::rc::Rc;
-use std::sync::{Arc, mpsc, Mutex, MutexGuard, TryLockResult};
-use std::sync::mpsc::{Receiver, RecvError};
+use std::sync::{Arc, mpsc, Mutex};
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 use fltk::app;
-use fltk::dialog::{alert_default, choice_default, FileChooser, FileChooserType, message_default};
-use fltk::enums::Event;
+use fltk::dialog::{alert_default, choice_default, message_default};
 use fltk::prelude::{WidgetExt, WindowExt};
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use thiserror::Error;
 
 use main_win::MainWindow;
 use settings_win::SettingsWindow;
-use SettingsError::{SError, SWarning};
+use SettingsError::{SError, SNotFound, SWarning};
 use UiMessage::*;
 
-use crate::file::{backup_all_changed_files, clean_backups, delete_backed_up_files, get_backed_up_files, get_live_files};
-use crate::settings::{get_default_settings, get_settings, Settings, SettingsError, write_settings};
+use crate::file::{backup_all_changed_files, delete_backed_up_files, delete_old_backups, get_backed_up_files, get_live_files};
+use crate::settings::{get_settings, Settings, SettingsError, write_settings};
 use crate::settings_win::SettingsWinError;
 use crate::watcher::{BackupMessage, BackupStatus, start_backup_thread, stop_backup_thread};
 
@@ -89,7 +78,7 @@ fn main() {
 
     let (ui_thread_tx, ui_thread_rx) = app::channel::<UiMessage>();
 
-    let mut main_state = Arc::new(Mutex::new(
+    let main_state = Arc::new(Mutex::new(
         MainState {
             main_win: MainWindow::new(ui_thread_tx.clone()),
             settings_win: None,
@@ -125,7 +114,7 @@ fn main() {
                 message_default(&warn_msg);
             }
         }
-        Err(SettingsError::SNotFound(Some(settings))) => {
+        Err(SNotFound(Some(settings))) => {
             // A settings file was just created with defaults and needs to be adjusted by the user
             state.settings = Some(settings.clone());
             let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
@@ -205,13 +194,30 @@ fn main() {
                             match settings::validate_settings(settings) {
                                 Ok(settings) => {
                                     state.settings = Some(settings.clone());
-                                    write_settings(settings.clone());
-                                    state.settings_win.as_mut().unwrap().wind.hide();
-                                    state.settings_win = None;
-                                    start_backup_thread(&mut state);
-                                    backup_all_changed_files(settings.clone());
-                                    clean_backups(settings);
-                                    internal_message_queue.push(UiMessage::RefreshFilesLists);
+                                    match write_settings(settings) {
+                                        Err(err) =>
+                                            match err {
+                                                SWarning(_settings, err) =>
+                                                    println!("Error: {}", err),
+                                                SError(err) => {
+                                                    drop(state);
+                                                    fatal_error(main_state.clone(), err);
+                                                }
+                                                SNotFound(_) =>
+                                                    panic!("illegal state")
+                                            }
+                                        Ok(settings) => {
+                                            state.settings_win.as_mut().unwrap().wind.hide();
+                                            state.settings_win = None;
+                                            start_backup_thread(&mut state);
+                                            if let Err(err) = backup_all_changed_files(settings.clone()) {
+                                                drop(state);
+                                                fatal_error(main_state.clone(), err);
+                                            };
+                                            delete_old_backups(settings);
+                                            internal_message_queue.push(UiMessage::RefreshFilesLists);
+                                        }
+                                    }
                                 }
                                 Err(err) => {
                                     match err {
@@ -236,6 +242,7 @@ fn main() {
                                     alert_default(&err_msg);
                                 }
                                 SettingsWinError::SwError(err_msg) => {
+                                    drop(state);
                                     fatal_error(main_state.clone(), err_msg);
                                 }
                             }
@@ -254,7 +261,7 @@ fn main() {
                     start_graceful_quit(main_state.clone(), 0);
                 }
                 RestoreBackup => {
-                    let mut state = main_state.lock().unwrap();
+                    let state = main_state.lock().unwrap();
                     let selected_backup_paths = state.main_win.get_selected_backed_up_paths();
                     if !selected_backup_paths.is_empty() {
                         //TODO show confirmation dialog
@@ -264,7 +271,7 @@ fn main() {
                     internal_message_queue.push(UiMessage::RefreshFilesLists);
                 }
                 DeleteBackup => {
-                    let mut state = main_state.lock().unwrap();
+                    let state = main_state.lock().unwrap();
                     let selected_backup_paths = state.main_win.get_selected_backed_up_paths();
                     if !selected_backup_paths.is_empty() {
                         match choice_default(
@@ -312,23 +319,27 @@ fn fatal_error(main_state: Arc<Mutex<MainState>>, err_msg: String) -> ! {
     // blocks until user dismisses the alert box
     alert_default(&err_msg);
     let exit_thread = start_graceful_quit(main_state, 1);
-    exit_thread.join();
+    if let Err(_) = exit_thread.join() {
+        // ignore
+    }
     // The exit thread should terminate the app before this occurs
     exit(1);
 }
 
-fn start_graceful_quit(mut main_state: Arc<Mutex<MainState>>, exit_code: i32) -> JoinHandle<()> {
+fn start_graceful_quit(main_state: Arc<Mutex<MainState>>, exit_code: i32) -> JoinHandle<()> {
     std::thread::spawn(move || {
         let mut state = match main_state.try_lock() {
             Ok(lock) =>
                 lock,
-            Err(err) =>
+            Err(_) =>
                 panic!("illegal state - main state lock not released")
         };
         if state.backup_thread.is_some() {
             let backup_thread = stop_backup_thread(&mut state);
             drop(state);
-            backup_thread.join();
+            if let Err(err) = backup_thread.join() {
+                println!("Panic from backup thread: {:?}", err);
+            }
         }
         exit(exit_code);
     })
