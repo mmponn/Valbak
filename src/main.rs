@@ -1,3 +1,4 @@
+
 use std::process::exit;
 use std::sync::{Arc, mpsc, Mutex};
 use std::thread::JoinHandle;
@@ -11,10 +12,18 @@ use settings_win::SettingsWindow;
 use SettingsError::{SError, SNotFound, SWarning};
 use UiMessage::*;
 
-use crate::file::{backup_all_changed_files, delete_backed_up_files, delete_old_backups, get_backed_up_files, get_live_files};
-use crate::settings::{get_settings, Settings, SettingsError, write_settings};
+use file_rotate::{FileRotate, ContentLimit, suffix::CountSuffix};
+use std::{fs, io::Write, path::PathBuf};
+use std::path::Path;
+use file_rotate::compression::Compression;
+use log::*;
+use simplelog::{ColorChoice, CombinedLogger, Config, ConfigBuilder, LevelFilter, TerminalMode, TermLogger, WriteLogger};
+
+use crate::file::{backup_all_changed_files, delete_backed_up_files, delete_old_backups, get_backed_up_files, get_live_files, PathExt};
+use crate::settings::{get_settings, get_settings_file_path, Settings, SettingsError, write_settings};
 use crate::settings_win::SettingsWinError;
 use crate::watcher::{BackupMessage, BackupStatus, start_backup_thread, stop_backup_thread};
+use crate::log;
 
 mod settings;
 mod main_win;
@@ -63,6 +72,28 @@ impl Clone for UiMessage {
     }
 }
 
+impl ToString for UiMessage {
+    fn to_string(&self) -> String {
+        match self {
+            AlertQuit(alert_msg)     => format!("AlertQuit({})", alert_msg),
+            AppQuit                  => "AppQuit".to_string(),
+            MenuSettings             => "MenuSettings".to_string(),
+            MenuQuit                 => "MenuQuit".to_string(),
+            MenuDocumentation        => "MenuDocumentation".to_string(),
+            MenuAbout                => "MenuAbout".to_string(),
+            SettingsBackupDestChoose => "SettingsBackupDestChoose".to_string(),
+            SettingsOk               => "SettingsOk".to_string(),
+            SettingsQuit             => "SettingsQuit".to_string(),
+            RestoreBackup            => "RestoreBackup".to_string(),
+            DeleteBackup             => "DeleteBackup".to_string(),
+            PushStatus(status)       => format!("PushStatus({})", status),
+            PopStatus                => "PopStatus".to_string(),
+            SetStatus(status)        => format!("SetStatus({})", status),
+            RefreshFilesLists        => "RefreshFilesLists".to_string()
+        }
+    }
+}
+
 pub struct MainState {
     main_win: MainWindow,
     settings_win: Option<SettingsWindow>,
@@ -88,6 +119,16 @@ fn main() {
             backup_thread_rx: None,
             ui_thread_tx: ui_thread_tx.clone(),
         }));
+
+    let settings_file_path = match get_settings_file_path() {
+        Ok(path) => path,
+        Err(err) =>
+            fatal_error(main_state.clone(), err.to_string())
+    };
+    let settings_folder_path = settings_file_path.parent().unwrap();
+
+    init_logging(main_state.clone(), settings_folder_path);
+
     let mut state = main_state.lock().unwrap();
 
     state.main_win.wind.show();
@@ -104,7 +145,7 @@ fn main() {
             fatal_error(main_state.clone(), err_msg);
         }
         Err(SWarning(settings, warn_msg)) => {
-            // Settings loaded with error
+            // Settings loaded with a user recoverable error
             state.settings = Some(settings.clone());
             let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
             settings_win.set_settings_to_win(settings);
@@ -115,7 +156,7 @@ fn main() {
             }
         }
         Err(SNotFound(Some(settings))) => {
-            // A settings file was just created with defaults and needs to be adjusted by the user
+            // A settings file was just created with defaults and needs to be validated and adjusted by the user
             state.settings = Some(settings.clone());
             let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
             settings_win.set_settings_to_win(settings);
@@ -153,11 +194,11 @@ fn main() {
                     PopStatus => {}
                     SetStatus(_) => {}
                     _ => {
-                        println!("Quitting - and ignoring message");
+                        warn!("Quitting - and ignoring message {}", ui_msg.to_string());
                         continue;
                     }
                 }
-                println!("Quitting - and allowing message");
+                info!("Quitting - and allowing message {}", ui_msg.to_string());
             }
             match ui_msg {
                 MenuSettings => {
@@ -195,17 +236,10 @@ fn main() {
                                 Ok(settings) => {
                                     state.settings = Some(settings.clone());
                                     match write_settings(settings) {
-                                        Err(err) =>
-                                            match err {
-                                                SWarning(_settings, err) =>
-                                                    println!("Error: {}", err),
-                                                SError(err) => {
-                                                    drop(state);
-                                                    fatal_error(main_state.clone(), err);
-                                                }
-                                                SNotFound(_) =>
-                                                    panic!("illegal state")
-                                            }
+                                        Err(err) => {
+                                            drop(state);
+                                            fatal_error(main_state, err.to_string());
+                                        }
                                         Ok(settings) => {
                                             state.settings_win.as_mut().unwrap().wind.hide();
                                             state.settings_win = None;
@@ -223,6 +257,7 @@ fn main() {
                                     match err {
                                         SWarning(_settings, err_msg) => {
                                             if !err_msg.is_empty() {
+                                                warn!("{}", err_msg);
                                                 alert_default(&err_msg);
                                             }
                                         }
@@ -239,6 +274,7 @@ fn main() {
                         Err(err) => {
                             match err {
                                 SettingsWinError::SwWarning(err_msg) => {
+                                    warn!("{}", err_msg);
                                     alert_default(&err_msg);
                                 }
                                 SettingsWinError::SwError(err_msg) => {
@@ -251,6 +287,7 @@ fn main() {
                 }
                 AlertQuit(alert_msg) => {
                     quitting = true;
+                    warn!("{}", alert_msg);
                     alert_default(&alert_msg);
                     start_graceful_quit(main_state.clone(), 1);
                 }
@@ -287,17 +324,17 @@ fn main() {
                     internal_message_queue.push(UiMessage::RefreshFilesLists);
                 }
                 PushStatus(status) => {
-                    println!("Pushing status message to: {}", &status);
+                    debug!("Pushing status message to: {}", &status);
                     let mut state = main_state.lock().unwrap();
                     state.main_win.push_status(status);
                 }
                 PopStatus => {
-                    println!("Popping status message");
+                    debug!("Popping status message");
                     let mut state = main_state.lock().unwrap();
                     state.main_win.pop_status();
                 }
                 SetStatus(status) => {
-                    println!("Setting status message to: {}", &status);
+                    debug!("Setting status message to: {}", &status);
                     let mut state = main_state.lock().unwrap();
                     state.main_win.set_status(status);
                 },
@@ -314,8 +351,34 @@ fn main() {
     }
 }
 
+fn init_logging(main_state: Arc<Mutex<MainState>>, settings_folder_path: &Path) {
+    let log_file_path = settings_folder_path.join("valbak.log");
+    let log_file_path = log_file_path.str();
+
+    let rotating_log_writer = FileRotate::new(log_file_path, CountSuffix::new(2), ContentLimit::Lines(1000), Compression::None);
+
+    let log_config = ConfigBuilder::default()
+        .set_time_format("%Y-%m-%d %H:%M:%S%.3f".to_string())
+        .set_time_to_local(true)
+        .build();
+
+    if let Err(err) = CombinedLogger::init(
+        vec![
+            TermLogger::new(LevelFilter::Warn, log_config.clone(), TerminalMode::Mixed, ColorChoice::Auto),
+            WriteLogger::new(LevelFilter::Debug, log_config, rotating_log_writer)
+        ],
+    ) {
+        fatal_error(main_state, "Error creating loggers".to_string());
+    }
+}
+
 fn fatal_error(main_state: Arc<Mutex<MainState>>, err_msg: String) -> ! {
     let err_msg = err_msg + "\nFatal error - Valbak must close";
+    if log::logger().enabled(&Metadata::builder().level(Level::Error).build()) {
+        error!("{}", err_msg);
+    } else {
+        println!("{}", err_msg);
+    }
     // blocks until user dismisses the alert box
     alert_default(&err_msg);
     let exit_thread = start_graceful_quit(main_state, 1);
@@ -338,7 +401,7 @@ fn start_graceful_quit(main_state: Arc<Mutex<MainState>>, exit_code: i32) -> Joi
             let backup_thread = stop_backup_thread(&mut state);
             drop(state);
             if let Err(err) = backup_thread.join() {
-                println!("Panic from backup thread: {:?}", err);
+                error!("Panic from backup thread: {:?}", err);
             }
         }
         exit(exit_code);

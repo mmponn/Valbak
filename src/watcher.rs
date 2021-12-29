@@ -5,6 +5,7 @@ use std::thread::JoinHandle;
 use std::time::Duration;
 
 use fltk::app;
+use log::{debug, error};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
@@ -33,7 +34,7 @@ impl Display for BackupStatus {
 }
 
 pub fn start_backup_thread(state: &mut MainState) {
-    println!("Starting backup thread");
+    debug!("Starting backup thread");
     assert!(state.settings.is_some(), "illegal state");
     assert!(state.backup_thread.is_none(), "illegal state");
 
@@ -55,7 +56,7 @@ pub fn start_backup_thread(state: &mut MainState) {
 }
 
 pub fn stop_backup_thread(state: &mut MainState) -> JoinHandle<()> {
-    println!("Signaling backup thread to stop");
+    debug!("Signaling backup thread to stop");
     assert!(state.backup_thread.is_some(), "illegal state");
     assert!(state.backup_thread_tx.is_some(), "illegal state");
 
@@ -71,7 +72,7 @@ fn backup_thread_main(
     backup_thread_rx: mpsc::Receiver<BackupMessage>,
     ui_thread_tx: app::Sender<UiMessage>
 ) {
-    println!("Backup thread started");
+    debug!("Backup thread started");
     let mut current_watcher = None;
     let mut current_watcher_thread: Option<JoinHandle<()>> = None;
     let mut current_watcher_thread_tx: Option<mpsc::Sender<DebouncedEvent>> = None;
@@ -80,7 +81,7 @@ fn backup_thread_main(
         match backup_thread_rx.recv() {
             Err(err) => {
                 ui_thread_tx.send(UiMessage::SetStatus(format!("Error: {}", err)));
-                println!("Backup thread stopped");
+                debug!("Backup thread stopped");
                 // Drops current_watcher if it exists, which will drop watcher_thread_tx, which will return an error
                 // from watcher_thread_rx.recv(), which will cause watcher_thread_main to return
                 return;
@@ -88,7 +89,7 @@ fn backup_thread_main(
             Ok(msg) => {
                 match msg {
                     BackupMessage::Stop {} => {
-                        println!("Stopping backup thread");
+                        debug!("Stopping backup thread");
                         if current_watcher_thread_tx.is_some() {
                             if let Err(err) = current_watcher_thread_tx.unwrap().send(
                                 DebouncedEvent::Error(
@@ -104,11 +105,11 @@ fn backup_thread_main(
                             }
                         }
                         ui_thread_tx.send(UiMessage::SetStatus("Stopped".to_string()));
-                        println!("Backup thread stopped");
+                        debug!("Backup thread stopped");
                         return;
                     }
                     BackupMessage::Run { settings } => {
-                        println!("Starting watcher thread");
+                        debug!("Starting watcher thread");
                         assert!(current_watcher.is_none(), "illegal state");
 
                         let (watcher_thread_tx, watcher_thread_rx) = mpsc::channel();
@@ -120,7 +121,7 @@ fn backup_thread_main(
 
                         if let Err(err) = new_watcher {
                             ui_thread_tx.send(UiMessage::SetStatus(format!("Error: {}", err)));
-                            println!("Backup thread stopped");
+                            debug!("Backup thread stopped");
                             // Drops current_watcher if it exists, which will drop watcher_thread_tx, which will return
                             // an error from watcher_thread_rx.recv(), which will cause watcher_thread_main to return
                             return;
@@ -132,7 +133,7 @@ fn backup_thread_main(
                             if let Err(err) = new_watcher.watch(&backup_pattern.source_dir, RecursiveMode::NonRecursive) {
                                 panic!("Error watching directory {}: {}", backup_pattern.source_dir.str(), err);
                             }
-                            println!("Watching {} for {}",
+                            debug!("Watching {} for {}",
                                 backup_pattern.source_dir.str(),
                                 backup_pattern.filename_pattern.as_str()
                             );
@@ -154,7 +155,7 @@ fn backup_thread_main(
 }
 
 fn watcher_thread_main(settings: Settings, watcher_thread_rx: mpsc::Receiver<DebouncedEvent>, ui_thread_tx: app::Sender<UiMessage>) {
-    println!("Watcher thread started");
+    debug!("Watcher thread started");
     loop {
         match watcher_thread_rx.recv() {
             Err(err) => {
@@ -170,20 +171,20 @@ fn watcher_thread_main(settings: Settings, watcher_thread_rx: mpsc::Receiver<Deb
                         match err {
                             notify::Error::Generic(err_msg) => {
                                 if err_msg == STOP_WATCHER_ERROR.to_string() {
-                                    println!("Watcher thread stopped");
+                                    debug!("Watcher thread stopped");
                                     return;
                                 } else {
-                                    println!("Watcher error for {:?}: {}", path, err_msg);
+                                    error!("Watcher error for {:?}: {}", path, err_msg);
                                 }
                             }
                             notify::Error::Io(err) => {
-                                println!("Watcher IO error for {:?}: {}", path, err);
+                                error!("Watcher IO error for {:?}: {}", path, err);
                             }
                             notify::Error::PathNotFound => {
-                                println!("Watcher path not found error for {:?}", path);
+                                error!("Watcher path not found error for {:?}", path);
                             }
                             notify::Error::WatchNotFound => {
-                                println!("Watcher watch not found error for {:?}", path);
+                                error!("Watcher watch not found error for {:?}", path);
                             }
                         }
                     }
@@ -198,7 +199,7 @@ fn on_file_change( backup_file_path: PathBuf, settings: &Settings, ui_thread_tx:
     let file_has_backup = match live_file_has_backup(settings.clone(), backup_file_path.clone()) {
         Ok(has_backup) => has_backup,
         Err(err) => {
-            println!("{}: {}", backup_file_path.str(), err);
+            error!("{}: {}", backup_file_path.str(), err);
             return;
         }
     };

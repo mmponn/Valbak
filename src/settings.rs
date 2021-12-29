@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use directories::ProjectDirs;
 use fltk::dialog::{alert_default, choice_default};
 use glob::Pattern;
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -41,6 +42,19 @@ pub enum SettingsError {
     SNotFound(Option<Settings>),
     SWarning(Settings, String),
     SError(String)
+}
+
+impl SettingsError {
+    pub fn to_string(&self) -> String {
+        match self {
+            SNotFound(settings) =>
+                "Settings Not Found".to_string(),
+            SWarning(settings, err) =>
+                err.clone(),
+            SError(err) =>
+                err.clone()
+        }
+    }
 }
 
 impl Display for SettingsError {
@@ -95,6 +109,7 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
             }
             _ => {  // Yes
                 if let Err(err) = std::fs::create_dir_all(settings.backup_dest_path.clone()) {
+                    error!("{}", err);
                     alert_default(format!("Error: {}", err).as_str());
                 }
             }
@@ -109,7 +124,7 @@ pub fn validate_settings(settings: Settings) -> Result<Settings, SettingsError> 
 }
 
 fn read_settings() -> Result<Settings, SettingsError> {
-    let settings_path = get_settings_path()?;
+    let settings_path = get_settings_file_path()?;
 
     let settings_str = match fs::read_to_string(settings_path) {
         Err(err) if err.kind() == NotFound =>
@@ -125,19 +140,19 @@ fn read_settings() -> Result<Settings, SettingsError> {
         Ok(settings) => settings
     };
 
-    println!("Read settings: {:?}", settings);
+    debug!("Read settings: {:?}", settings);
     Ok(settings)
 }
 
 pub fn write_settings(settings: Settings) -> Result<Settings, SettingsError> {
-    let settings_path = get_settings_path()?;
+    let settings_path = get_settings_file_path()?;
 
     let settings_dir_path = settings_path.parent().unwrap();
     if let Err(err) = std::fs::create_dir_all(settings_dir_path) {
         if err.kind() != ErrorKind::AlreadyExists {
             let err_msg = format!("Error creating settings directory {}: {}",
                 settings_dir_path.str(), err);
-            println!("{}", err_msg);
+            error!("{}", err_msg);
             return Err(SWarning(settings, err_msg));
         }
     }
@@ -155,16 +170,16 @@ pub fn write_settings(settings: Settings) -> Result<Settings, SettingsError> {
     }
 }
 
-fn get_settings_path() -> Result<PathBuf, SettingsError> {
+pub fn get_settings_file_path() -> Result<PathBuf, SettingsError> {
     let project_dirs = ProjectDirs::from("org", "valbak", "Valbak");
     match project_dirs {
         None =>
             Err(SError("Failed to find settings folder".to_string())),
         Some(project_dirs) => {
-            let settings_path = project_dirs.config_dir();
-            let settings_path = settings_path.join(Path::new("settings.json"));
-            println!("Using settings file: {:?}", settings_path);
-            Ok(settings_path)
+            let settings_dir_path = project_dirs.config_dir();
+            let settings_file_path = settings_dir_path.join(Path::new("settings.json"));
+            info!("Using settings file: {:?}", settings_file_path);
+            Ok(settings_file_path)
         }
     }
 }

@@ -5,6 +5,7 @@ use chrono::{DateTime, Local};
 use fltk::{app::*, app, browser::*, button::*, enums::*, group::*, prelude::*, window::*};
 use fltk::frame::Frame;
 use fltk::menu::{MenuBar, MenuFlag};
+use log::error;
 
 use crate::{UiMessage, win_common};
 use crate::file::{get_backed_up_filename, get_backed_up_version_number, PathExt};
@@ -141,7 +142,7 @@ impl MainWindow {
         for live_file in live_files {
             let live_file_metadata = match live_file.metadata() {
                 Err(err) => {
-                    println!("Error reading file metadata for {}: {}", live_file.str(), err);
+                    error!("Error reading file metadata for {}: {}", live_file.str(), err);
                     continue;
                 }
                 Ok(metadata) =>
@@ -149,7 +150,7 @@ impl MainWindow {
             };
             let live_file_modified = match live_file_metadata.modified() {
                 Err(err) => {
-                    println!("Error reading file modified time for {}: {}", live_file.str(), err);
+                    error!("Error reading file modified time for {}: {}", live_file.str(), err);
                     continue;
                 }
                 Ok(modified) =>
@@ -178,14 +179,14 @@ impl MainWindow {
             let backup_number_a = match get_backed_up_version_number(a) {
                 Some(n) => n,
                 None => {
-                    println!("Invalid backup file name {}", b.str());
+                    error!("Invalid backup file name {}", b.str());
                     return Ordering::Equal;
                 }
             };
             let backup_number_b = match get_backed_up_version_number(b) {
                 Some(n) => n,
                 None => {
-                    println!("Invalid backup file name {}", b.str());
+                    error!("Invalid backup file name {}", b.str());
                     return Ordering::Equal;
                 }
             };
@@ -197,14 +198,14 @@ impl MainWindow {
                     let filename_a = match get_backed_up_filename(a) {
                         Some(n) => n,
                         None => {
-                            println!("Invalid backup file name {}", b.str());
+                            error!("Invalid backup file name {}", b.str());
                             return Ordering::Equal;
                         }
                     };
                     let filename_b = match get_backed_up_filename(b) {
                         Some(n) => n,
                         None => {
-                            println!("Invalid backup file name {}", b.str());
+                            error!("Invalid backup file name {}", b.str());
                             return Ordering::Equal;
                         }
                     };
@@ -217,7 +218,7 @@ impl MainWindow {
         for backed_up_file in backed_up_files {
             let backed_up_file_metadata = match backed_up_file.metadata() {
                 Err(err) => {
-                    println!("Error reading file metadata for {}: {}", backed_up_file.str(), err);
+                    error!("Error reading file metadata for {}: {}", backed_up_file.str(), err);
                     continue;
                 }
                 Ok(metadata) =>
@@ -225,7 +226,7 @@ impl MainWindow {
             };
             let backed_up_file_modified = match backed_up_file_metadata.modified() {
                 Err(err) => {
-                    println!("Error reading file modified time for {}: {}", backed_up_file.str(), err);
+                    error!("Error reading file modified time for {}: {}", backed_up_file.str(), err);
                     continue;
                 }
                 Ok(modified) =>
