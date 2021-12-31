@@ -1,29 +1,27 @@
-
+use std::path::Path;
 use std::process::exit;
 use std::sync::{Arc, mpsc, Mutex};
 use std::thread::JoinHandle;
 
+use anyhow::Error;
+use file_rotate::{ContentLimit, FileRotate, suffix::CountSuffix};
+use file_rotate::compression::Compression;
 use fltk::app;
 use fltk::dialog::{alert_default, choice_default, message_default};
 use fltk::prelude::{WidgetExt, WindowExt};
+use log::*;
+use simplelog::{ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, TerminalMode, TermLogger, WriteLogger};
 
+use FileError::{FError, FWarning};
 use main_win::MainWindow;
 use settings_win::SettingsWindow;
 use SettingsError::{SError, SNotFound, SWarning};
 use UiMessage::*;
 
-use file_rotate::{FileRotate, ContentLimit, suffix::CountSuffix};
-use std::{fs, io::Write, path::PathBuf};
-use std::path::Path;
-use file_rotate::compression::Compression;
-use log::*;
-use simplelog::{ColorChoice, CombinedLogger, Config, ConfigBuilder, LevelFilter, TerminalMode, TermLogger, WriteLogger};
-
-use crate::file::{backup_all_changed_files, delete_backed_up_files, delete_old_backups, get_backed_up_files, get_live_files, PathExt};
+use crate::file::{backup_all_changed_files, delete_backed_up_files, delete_old_backups, FileError, get_backed_up_files, get_live_files, PathExt, restore_backed_up_files};
 use crate::settings::{get_settings, get_settings_file_path, Settings, SettingsError, write_settings};
 use crate::settings_win::SettingsWinError;
 use crate::watcher::{BackupMessage, BackupStatus, start_backup_thread, stop_backup_thread};
-use crate::log;
 
 mod settings;
 mod main_win;
@@ -33,6 +31,7 @@ mod watcher;
 mod file;
 
 pub enum UiMessage {
+    Alert(String),
     AlertQuit(String),
     AppQuit,
     MenuSettings,
@@ -53,6 +52,7 @@ pub enum UiMessage {
 impl Clone for UiMessage {
     fn clone(&self) -> Self {
         match self {
+            Alert(alert_msg) => Alert(alert_msg.clone()),
             AlertQuit(alert_msg) => AlertQuit(alert_msg.clone()),
             AppQuit => AppQuit,
             MenuSettings => MenuSettings,
@@ -75,6 +75,7 @@ impl Clone for UiMessage {
 impl ToString for UiMessage {
     fn to_string(&self) -> String {
         match self {
+            Alert(alert_msg)         => format!("Alert({})", alert_msg),
             AlertQuit(alert_msg)     => format!("AlertQuit({})", alert_msg),
             AppQuit                  => "AppQuit".to_string(),
             MenuSettings             => "MenuSettings".to_string(),
@@ -244,11 +245,13 @@ fn main() {
                                             state.settings_win.as_mut().unwrap().wind.hide();
                                             state.settings_win = None;
                                             start_backup_thread(&mut state);
+                                            drop(state);
                                             if let Err(err) = backup_all_changed_files(settings.clone()) {
-                                                drop(state);
-                                                fatal_error(main_state.clone(), err);
+                                                handle_file_error(main_state.clone(), &err);
                                             };
-                                            delete_old_backups(settings);
+                                            if let Err(err) = delete_old_backups(settings) {
+                                                handle_file_error(main_state.clone(), &err);
+                                            }
                                             internal_message_queue.push(UiMessage::RefreshFilesLists);
                                         }
                                     }
@@ -285,11 +288,11 @@ fn main() {
                         }
                     };
                 }
-                AlertQuit(alert_msg) => {
-                    quitting = true;
-                    warn!("{}", alert_msg);
+                Alert(alert_msg) => {
                     alert_default(&alert_msg);
-                    start_graceful_quit(main_state.clone(), 1);
+                }
+                AlertQuit(alert_msg) => {
+                    fatal_error(main_state.clone(), alert_msg);
                 }
                 AppQuit
                 | MenuQuit
@@ -303,7 +306,10 @@ fn main() {
                     if !selected_backup_paths.is_empty() {
                         //TODO show confirmation dialog
                         assert!(state.settings.is_some(), "illegal state");
-                        file::restore_backed_up_files(state.settings.as_ref().unwrap().clone(), selected_backup_paths);
+                        if let Err(err) = restore_backed_up_files(state.settings.as_ref().unwrap().clone(), selected_backup_paths) {
+                            drop(state);
+                            handle_file_error(main_state.clone(), &err);
+                        }
                     }
                     internal_message_queue.push(UiMessage::RefreshFilesLists);
                 }
@@ -316,7 +322,10 @@ fn main() {
                             "Yes", "Cancel", ""
                         ) {
                             0 => {  // Yes
-                                delete_backed_up_files(selected_backup_paths);
+                                if let Err(err) = delete_backed_up_files(selected_backup_paths) {
+                                    drop(state);
+                                    handle_file_error(main_state.clone(), &err);
+                                }
                             }
                             _ => ()
                         }
@@ -340,13 +349,48 @@ fn main() {
                 },
                 RefreshFilesLists => {
                     let mut state = main_state.lock().unwrap();
-                    let live_files = get_live_files(state.settings.as_ref().unwrap().clone());
-                    state.main_win.set_live_files_to_win(live_files);
-
-                    let backed_up_files = get_backed_up_files(state.settings.as_ref().unwrap().clone());
-                    state.main_win.set_backed_up_files_to_win(backed_up_files);
+                    match get_live_files(state.settings.as_ref().unwrap().clone()) {
+                        Ok(live_files) => {
+                            state.main_win.set_live_files_to_win(live_files);
+                            match get_backed_up_files(state.settings.as_ref().unwrap().clone()) {
+                                Ok(backed_up_files) => {
+                                    state.main_win.set_backed_up_files_to_win(backed_up_files);
+                                }
+                                Err(err) => {
+                                    drop(state);
+                                    handle_file_error(main_state.clone(), &err);
+                                }
+                            }
+                        },
+                        Err(err) => {
+                            drop(state);
+                            handle_file_error(main_state.clone(), &err);
+                        }
+                    }
                 }
             }
+        }
+    }
+}
+
+fn handle_file_error(main_state: Arc<Mutex<MainState>>, file_err: &Error) {
+    let file_err = file_err.downcast_ref::<FileError>()
+        .unwrap_or_else(|| fatal_error(main_state.clone(), file_err.to_string()));
+    let summarize_errs = |errs: &Vec<String>| {
+        let mut alert_err = errs.join("\n");
+        if alert_err.len() > 100 {
+            alert_err = alert_err[..100].to_string() + "...";
+        }
+        alert_err
+    };
+    match file_err {
+        FWarning(errs) => {
+            errs.iter().for_each(|err_msg| warn!("{}", err_msg));
+            alert_default(&summarize_errs(errs));
+        }
+        FError(errs) => {
+            errs.iter().for_each(|err_msg| error!("{}", err_msg));
+            fatal_error(main_state.clone(), summarize_errs(errs));
         }
     }
 }
@@ -355,7 +399,8 @@ fn init_logging(main_state: Arc<Mutex<MainState>>, settings_folder_path: &Path) 
     let log_file_path = settings_folder_path.join("valbak.log");
     let log_file_path = log_file_path.str();
 
-    let rotating_log_writer = FileRotate::new(log_file_path, CountSuffix::new(2), ContentLimit::Lines(1000), Compression::None);
+    let rotating_log_writer =
+        FileRotate::new(log_file_path, CountSuffix::new(2), ContentLimit::Lines(1000), Compression::None);
 
     let log_config = ConfigBuilder::default()
         .set_time_format("%Y-%m-%d %H:%M:%S%.3f".to_string())
@@ -368,7 +413,7 @@ fn init_logging(main_state: Arc<Mutex<MainState>>, settings_folder_path: &Path) 
             WriteLogger::new(LevelFilter::Debug, log_config, rotating_log_writer)
         ],
     ) {
-        fatal_error(main_state, "Error creating loggers".to_string());
+        fatal_error(main_state, format!("Error creating loggers: {}", err));
     }
 }
 

@@ -1,14 +1,29 @@
+use std::fmt::{Display, Formatter};
 use std::fs::Metadata;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use anyhow::{bail, Result};
 use filetime::{FileTime, set_file_mtime};
 use glob::{glob, Pattern};
-use log::{error, info};
+use log::{error, info, warn};
 use multimap::MultiMap;
 
+use crate::file::FileError::{FError, FWarning};
 use crate::settings::{BackupFilePattern, Settings};
+
+#[derive(thiserror::Error, Debug)]
+pub enum FileError {
+    FWarning(Vec<String>),
+    FError(Vec<String>),
+}
+
+impl Display for FileError {
+    fn fmt(&self, _f: &mut Formatter<'_>) -> std::fmt::Result {
+        todo!()
+    }
+}
 
 pub trait PathExt {
     fn file_name_str(&self) -> &str;
@@ -36,7 +51,7 @@ impl PathExt for PathBuf {
 }
 
 /// Queries the filesystem and returns all live files as specified by `settings`
-pub fn get_live_files(settings: Settings) -> Vec<PathBuf> {
+pub fn get_live_files(settings: Settings) -> Result<Vec<PathBuf>> {
     let mut live_files = Vec::new();
     for backup_pattern in &settings.backup_patterns {
         let glob_pattern = backup_pattern.source_dir.join(&backup_pattern.filename_pattern);
@@ -50,17 +65,17 @@ pub fn get_live_files(settings: Settings) -> Vec<PathBuf> {
         for glob_path in glob_paths {
             match glob_path {
                 Err(err) =>
-                    error!("Error reading live files: {}", err),
+                    return Err(FError( vec![format!("Error reading live files: {}", err)] ).into()),
                 Ok(file_path) =>
                     live_files.push(file_path)
             }
         }
     }
-    live_files
+    Ok(live_files)
 }
 
 /// Queries the filesystem and returns all backed up files as specified by `settings`
-pub fn get_backed_up_files(settings: Settings) -> Vec<PathBuf> {
+pub fn get_backed_up_files(settings: Settings) -> Result<Vec<PathBuf>> {
     let mut backed_up_files = Vec::new();
     for backup_pattern in settings.backup_patterns {
         let backup_folder_name = backup_pattern.source_dir.file_name().unwrap();
@@ -91,22 +106,16 @@ pub fn get_backed_up_files(settings: Settings) -> Vec<PathBuf> {
             }
         }
     }
-    backed_up_files
+    Ok(backed_up_files)
 }
 
 /// Searches all live files for any that do not have a backed up version, and creates backups for such files.
-pub fn backup_all_changed_files(settings: Settings) -> Result<(), String> {
-    let live_file_paths = get_live_files(settings.clone());
+pub fn backup_all_changed_files(settings: Settings) -> Result<()> {
+    let live_file_paths = get_live_files(settings.clone())?;
     for live_file_path in live_file_paths {
-        let file_has_backup = match live_file_has_backup(settings.clone(), live_file_path.clone()) {
-            Ok(has_backup) => has_backup,
-            Err(err) => {
-                return Err(err);
-            }
-        };
-        if !file_has_backup {
-            back_up_live_file(settings.clone(), live_file_path);
-            delete_old_backups(settings.clone());
+        if !live_file_has_backup(settings.clone(), live_file_path.clone())? {
+            back_up_live_file(settings.clone(), live_file_path)?;
+            delete_old_backups(settings.clone())?;
         }
     }
     Ok(())
@@ -115,7 +124,7 @@ pub fn backup_all_changed_files(settings: Settings) -> Result<(), String> {
 /// Determines whether the given live file path has been previously backed up.
 /// A live file is considered backed up if a version file is found that matches the live file's size and last-modified
 /// timestamp.
-pub fn live_file_has_backup(settings: Settings, live_file_path: PathBuf) -> Result<bool, String> {
+pub fn live_file_has_backup(settings: Settings, live_file_path: PathBuf) -> Result<bool> {
     // 1. Find the backup pattern related to this file
 
     let live_file_folder_name = live_file_path.parent().unwrap().file_name_str();
@@ -142,7 +151,7 @@ pub fn live_file_has_backup(settings: Settings, live_file_path: PathBuf) -> Resu
             let error_msg =
                 format!("Cannot find backup configuration for changed file {}", live_file_path.str());
             // ui_thread_tx.send( SetStatus(error_msg.to_string()));
-            return Err(error_msg);
+            return Err(FWarning( vec![error_msg] ).into());
         }
     };
 
@@ -150,32 +159,12 @@ pub fn live_file_has_backup(settings: Settings, live_file_path: PathBuf) -> Resu
     //    other words, determine if the file that just changed appears to be a copy of an already backed up file.
 
     let backed_up_version_paths =
-        get_backed_up_version_paths(settings.backup_dest_path.clone(), backup_pattern.clone());
-    let backed_up_version_paths = match backed_up_version_paths {
-        Ok(paths) => paths,
-        Err(err) => {
-            let error_msg = format!("Failed to read backed up files: {}", err);
-            // ui_thread_tx.send( SetStatus(error_msg.to_string()));
-            return Err(error_msg) ;
-        }
-    };
+        get_backed_up_version_paths(settings.backup_dest_path.clone(), backup_pattern.clone())?;
 
-    let (live_file_metadata, live_file_modified) = match get_file_metadata(live_file_path.clone()) {
-        Ok((metadata, modified)) => (metadata, modified),
-        Err(err) => {
-            // ui_thread_tx.send(UiMessage::SetStatus(err));
-            return Err(err);
-        }
-    };
+    let (live_file_metadata, live_file_modified) = get_file_metadata(live_file_path.clone())?;
 
     for backed_up_version_path in backed_up_version_paths {
-        let (backed_up_file_metadata, backed_up_file_modified) = match get_file_metadata(backed_up_version_path.clone()) {
-            Ok((metadata, modified)) => (metadata, modified),
-            Err(err) => {
-                // ui_thread_tx.send(SetStatus(err));
-                return Err(err);
-            }
-        };
+        let (backed_up_file_metadata, backed_up_file_modified) = get_file_metadata(backed_up_version_path.clone())?;
         if backed_up_file_metadata.len() == live_file_metadata.len() && backed_up_file_modified == live_file_modified {
             info!("{} appears to be a copy of {}", live_file_path.str(), backed_up_version_path.str());
             // ui_thread_tx.send(UiMessage::RefreshFilesLists);
@@ -187,15 +176,14 @@ pub fn live_file_has_backup(settings: Settings, live_file_path: PathBuf) -> Resu
 }
 
 /// Creates a new backup version file for `live_file_path`
-pub fn back_up_live_file(settings: Settings, live_file_path: PathBuf) {
+pub fn back_up_live_file(settings: Settings, live_file_path: PathBuf) -> Result<()> {
     // Copy the file and its containing folder name
     let live_file_folder_name = live_file_path.parent().unwrap().file_name().unwrap();
 
     let backup_dest_path = settings.backup_dest_path.join(live_file_folder_name);
     if let Err(err) = std::fs::create_dir(backup_dest_path.clone()) {
         if err.kind() != ErrorKind::AlreadyExists {
-            error!("Error copying file: {}", err);
-            return;
+            bail!("Error copying file: {}", err);
         }
     }
     let live_filename = live_file_path.file_name_str();
@@ -205,49 +193,47 @@ pub fn back_up_live_file(settings: Settings, live_file_path: PathBuf) {
 
     // ui_thread_tx.send(UiMessage::PushStatus(format!("Copying {}", backup_file_from.str())));
     if let Err(err) = std::fs::copy(live_file_path.clone(), temp_backup_file_path.clone()) {
-        error!("Error copying file: {}", err);
         // ui_thread_tx.send(UiMessage::SetStatus(format!("Error: {}", err)));
-        return;
+        bail!("Error copying file: {}", err);
     }
 
     let (live_file_metadata, _live_file_modified) = match get_file_metadata(live_file_path.clone()) {
         Ok((metadata, modified)) => (metadata, modified),
         Err(err) => {
-            error!("{}", err);
             // ui_thread_tx.send(SetStatus(err));
-            return;
+            bail!("{}", err);
         }
     };
     let live_file_modified_filetime = FileTime::from_last_modification_time(&live_file_metadata);
     if let Err(err) = set_file_mtime(temp_backup_file_path.clone(), live_file_modified_filetime) {
-        error!("Error setting backup timestamp for {}: {}", temp_backup_file_path.str(), err);
-        return;
+        bail!("Error setting backup timestamp for {}: {}", temp_backup_file_path.str(), err);
     }
 
-    let next_version = next_backup_version(&settings, backup_dest_path.clone(), live_filename.to_string());
+    let next_version = next_backup_version(&settings, backup_dest_path.clone(), live_filename.to_string())?;
     let backed_up_filename = format!("{}.{}", live_filename, next_version);
     let backed_up_file_path = backup_dest_path.join(backed_up_filename);
 
     info!("Copying {} to {}", live_file_path.str(), backed_up_file_path.str());
 
     if let Err(err) = std::fs::rename(temp_backup_file_path, backed_up_file_path) {
-        error!("{}", err);
         // ui_thread_tx.send(SetStatus(err.to_string()));
-        return;
+        bail!("{}", err);
     }
 
     // ui_thread_tx.send(UiMessage::PopStatus);
+    Ok(())
 }
 
 /// Determines the version number for the next backup of `backup_filename` in `backed_up_folder`
-fn next_backup_version(_settings: &Settings, backed_up_folder: PathBuf, backup_filename: String) -> u32 {
+fn next_backup_version(_settings: &Settings, backed_up_folder: PathBuf, backup_filename: String) -> Result<u32> {
     let backed_up_versions_pattern = backed_up_folder
         .join(backup_filename + ".*");
     let backed_up_history_files = match glob(backed_up_versions_pattern.str()) {
         Ok(history_paths) => Some(history_paths),
         Err(err) => {
-            error!("Error scanning backed up files for {}: {}", backed_up_versions_pattern.str(), err);
-            None
+            return Err( FWarning(
+                vec![format!("Error scanning backed up files for {}: {}", backed_up_versions_pattern.str(), err)]
+            ).into() );
         }
     };
     let oldest_backed_up_version = match backed_up_history_files {
@@ -267,7 +253,7 @@ fn next_backup_version(_settings: &Settings, backed_up_folder: PathBuf, backup_f
                         }
                     }
                     Err(err) => {
-                        error!("Error reading backed up history files: {}", err);
+                        warn!("Error reading backed up history file: {}", err);
                         continue;
                     }
                 }
@@ -277,7 +263,7 @@ fn next_backup_version(_settings: &Settings, backed_up_folder: PathBuf, backup_f
         None =>
             0u32
     };
-    oldest_backed_up_version + 1
+    Ok(oldest_backed_up_version + 1)
 }
 
 /// Parses `backed_up_file_path` and returns its version number
@@ -315,16 +301,15 @@ pub fn strip_version_suffix_from_backed_up_file_path(backed_up_file_path: &PathB
 
 /// Check if there exists more backed up files than is allowed by `settings` and, if there are too many, deletes the
 /// oldest backed up file until the number of files complies with the maximum specified by `settings`
-pub fn delete_old_backups(settings: Settings) {
+pub fn delete_old_backups(settings: Settings) -> Result<()> {
     let mut backed_up_file_paths_by_stripped_file_paths = MultiMap::new();
 
-    let backed_up_file_paths = get_backed_up_files(settings.clone());
+    let backed_up_file_paths = get_backed_up_files(settings.clone())?;
     for backed_up_file_path in backed_up_file_paths {
         let stripped_backed_up_file_path = match strip_version_suffix_from_backed_up_file_path(&backed_up_file_path) {
             Some(path) => path,
             None => {
-                error!("Unable to find version suffix in {}", backed_up_file_path.str());
-                return;
+                bail!("Unable to find version suffix in {}", backed_up_file_path.str());
             }
         };
         backed_up_file_paths_by_stripped_file_paths.insert(stripped_backed_up_file_path.str().to_string(), backed_up_file_path);
@@ -347,30 +332,31 @@ pub fn delete_old_backups(settings: Settings) {
                 });
         }
     }
+    Ok(())
 }
 
 /// Deletes each file found in `backed_up_file_paths`
-pub fn delete_backed_up_files(backed_up_file_paths: Vec<PathBuf>) {
+pub fn delete_backed_up_files(backed_up_file_paths: Vec<PathBuf>) -> Result<()> {
+    let mut errs = Vec::new();
     for backed_up_path in backed_up_file_paths {
         info!("Deleting backed up file {}", backed_up_path.str());
         if let Err(err) = std::fs::remove_file(backed_up_path.clone()) {
-            error!("Error deleting file {}: {}", backed_up_path.str(), err);
+            errs.push(format!("Error deleting file {}: {}", backed_up_path.str(), err));
         }
+    }
+    if errs.is_empty() {
+        Ok(())
+    } else {
+        Err(FWarning(errs).into())
     }
 }
 
 /// Restores each file found in `backed_up_file_paths`
-pub fn restore_backed_up_files(settings: Settings, backed_up_file_paths: Vec<PathBuf>) {
+pub fn restore_backed_up_files(settings: Settings, backed_up_file_paths: Vec<PathBuf>) -> Result<()>{
     for backed_up_path in backed_up_file_paths {
         let backed_up_folder_path = backed_up_path.parent().unwrap();
 
-        let source_file_path = match get_live_file_for_backed_up_file(settings.clone(), backed_up_path.clone()) {
-            Ok(path) => path,
-            Err(err) => {
-                error!("{}: {}", backed_up_path.str(), err);
-                continue;
-            }
-        };
+        let source_file_path = get_live_file_for_backed_up_file(settings.clone(), backed_up_path.clone())?;
         let source_filename = source_file_path.file_name_str();
 
         let temp_source_filename = "_".to_string() + source_filename;
@@ -403,12 +389,13 @@ pub fn restore_backed_up_files(settings: Settings, backed_up_file_paths: Vec<Pat
 
         info!("Restored {}", source_file_path.str());
     }
+    Ok(())
 }
 
 /// Finds all version files matching `backup_pattern` in `backup_dest_path`
 pub fn get_backed_up_version_paths(
     backup_dest_path: PathBuf, backup_pattern: BackupFilePattern
-) -> Result<Vec<PathBuf>, String> {
+) -> Result<Vec<PathBuf>> {
 
     // 1. Create an absolute backed up file pattern
 
@@ -422,7 +409,11 @@ pub fn get_backed_up_version_paths(
 
     let glob_paths = match glob(backed_up_versions_pattern.str()) {
         Err(err) => {
-            return Err(format!("Error scanning backed up files for {}: {}", backed_up_versions_pattern.str(), err));
+            return Err(
+                FError(
+                    vec![format!("Error scanning backed up files for {}: {}", backed_up_versions_pattern.str(), err)]
+                ).into()
+            );
         }
         Ok(glob_paths) =>
             glob_paths
@@ -434,7 +425,10 @@ pub fn get_backed_up_version_paths(
     for glob_path in glob_paths {
         match glob_path {
             Err(err) =>
-                return Err(format!("Error scanning backed up files for {}: {}", backed_up_versions_pattern.str(), err)),
+                return Err(FError(
+                    vec![format!("Error scanning backed up files for {}: {}", backed_up_versions_pattern.str(), err)]
+                ).into()
+            ),
             Ok(glob_path) =>
                 backed_up_version_paths.push(glob_path)
         }
@@ -445,7 +439,7 @@ pub fn get_backed_up_version_paths(
 
 /// Transforms `backed_up_file` into a [`PathBuf`] representing the live file for which `backed_up_file` was originally
 /// created. Note that the returned path is not confirmed to exist.
-fn get_live_file_for_backed_up_file(settings: Settings, backed_up_file: PathBuf) -> Result<PathBuf, String> {
+fn get_live_file_for_backed_up_file(settings: Settings, backed_up_file: PathBuf) -> Result<PathBuf> {
     let backed_up_folder_name = backed_up_file.parent().unwrap().file_name().unwrap();
 
     let stripped_backed_up_filename = match strip_version_suffix_from_backed_up_file_path(&backed_up_file) {
@@ -453,7 +447,7 @@ fn get_live_file_for_backed_up_file(settings: Settings, backed_up_file: PathBuf)
             path.file_name_str().to_string()
         },
         None =>
-            return Err(format!("invalid backed up file name: {}", backed_up_file.str()))
+            return Err(FError( vec![format!("invalid backed up file name: {}", backed_up_file.str())] ).into())
     };
 
     for backup_pattern in settings.backup_patterns {
@@ -464,7 +458,11 @@ fn get_live_file_for_backed_up_file(settings: Settings, backed_up_file: PathBuf)
             let backup_file_pattern = match Pattern::new(backup_pattern_path.str()) {
                 Ok(pattern) => pattern,
                 Err(err) =>
-                    return Err(format!("invalid file pattern \"{}\": {}", backup_pattern_path.str(), err))
+                    return Err(
+                        FError(
+                            vec![format!("invalid file pattern \"{}\": {}", backup_pattern_path.str(), err)]
+                        ).into()
+                    )
             };
 
             // The file name of the backed up file grafted onto the source path
@@ -477,18 +475,18 @@ fn get_live_file_for_backed_up_file(settings: Settings, backed_up_file: PathBuf)
         }
     }
 
-    Err(format!("Failed to find source file for backed up file {}", backed_up_file.str()))
+    Err(FError( vec![format!("Failed to find source file for backed up file {}", backed_up_file.str())] ).into())
 }
 
 /// Queries the filesystem for `file_path` and returns the file's metadata and modification timestamp
-pub fn get_file_metadata(file_path: PathBuf ) -> Result<(Metadata, SystemTime), String> {
+pub fn get_file_metadata(file_path: PathBuf ) -> Result<(Metadata, SystemTime)> {
     return match file_path.metadata() {
         Err(err) => {
             let error_msg =
                 format!("Cannot read metadata for changed file {}: {}",
                     file_path.str(), err
                 ).to_string();
-            Err(error_msg)
+            Err(FError( vec![error_msg] ).into())
         }
         Ok(metadata) => {
             match metadata.modified() {
@@ -497,7 +495,7 @@ pub fn get_file_metadata(file_path: PathBuf ) -> Result<(Metadata, SystemTime), 
                         format!("Cannot read metadata for changed file {}: {}",
                             file_path.str(), err
                         ).to_string();
-                    Err(error_msg)
+                    Err(FError( vec![error_msg] ).into())
                 }
                 Ok(modified) => {
                     Ok((metadata, modified))

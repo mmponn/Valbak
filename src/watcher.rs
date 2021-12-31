@@ -4,12 +4,15 @@ use std::sync::mpsc;
 use std::thread::JoinHandle;
 use std::time::Duration;
 
+use anyhow::Error;
 use fltk::app;
 use log::{debug, error};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
-use crate::{MainState, UiMessage};
+use FileError::{FError, FWarning};
+
+use crate::{FileError, MainState, UiMessage};
 use crate::file::{back_up_live_file, delete_old_backups, live_file_has_backup, PathExt};
 use crate::settings::Settings;
 
@@ -199,13 +202,32 @@ fn on_file_change( backup_file_path: PathBuf, settings: &Settings, ui_thread_tx:
     let file_has_backup = match live_file_has_backup(settings.clone(), backup_file_path.clone()) {
         Ok(has_backup) => has_backup,
         Err(err) => {
-            error!("{}: {}", backup_file_path.str(), err);
+            handle_error(&ui_thread_tx, &err);
             return;
         }
     };
     if !file_has_backup {
-        back_up_live_file(settings.clone(), backup_file_path.clone());
-        delete_old_backups(settings.clone());
+        if let Err(err) = back_up_live_file(settings.clone(), backup_file_path.clone()) {
+            handle_error(&ui_thread_tx, &err);
+        }
+        if let Err(err) = delete_old_backups(settings.clone()) {
+            handle_error(&ui_thread_tx, &err);
+        }
         ui_thread_tx.send(UiMessage::RefreshFilesLists);
+    }
+}
+
+fn handle_error(ui_thread_tx: &app::Sender<UiMessage>, err: &Error) {
+    if let Some(file_err) = err.downcast_ref::<FileError>() {
+        match file_err {
+            FWarning(errs) => {
+                errs.iter().for_each(|err_msg| ui_thread_tx.send(UiMessage::Alert(err_msg.clone())));
+            }
+            FError(errs) => {
+                errs.iter().for_each(|err_msg| ui_thread_tx.send(UiMessage::AlertQuit(err_msg.clone())));
+            }
+        }
+    } else {
+        ui_thread_tx.send(UiMessage::AlertQuit(err.to_string()));
     }
 }

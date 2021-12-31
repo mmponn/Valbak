@@ -1,9 +1,8 @@
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [package]
 name = "valbak"
 version = "0.1.0"
 edition = "2018"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [profile.dev]
 panic="abort"
@@ -20,8 +19,8 @@ serde = { version = "^1.0", features = ["derive"] }
 serde_json = "^1.0"
 directories = "^4.0"
 dirs = "^4.0"
-anyhow = "1.0"
 thiserror = "1.0.30"
+anyhow = { version = "1.0.52", features = ["backtrace"] }
 glob = "0.3.0"
 notify = "4.0.17"
 chrono = "0.4.19"
@@ -29,4 +28,4 @@ filetime = "0.2"
 multimap = "0.8.3"
 log = "^0.4"
 simplelog = "0.11.1"
-file-rotate = "0.5.0"
+file-rotate = { path = "../file-rotate", version = "0.5.0" }

@@ -47,9 +47,9 @@ pub enum SettingsError {
 impl SettingsError {
     pub fn to_string(&self) -> String {
         match self {
-            SNotFound(settings) =>
+            SNotFound(_settings) =>
                 "Settings Not Found".to_string(),
-            SWarning(settings, err) =>
+            SWarning(_settings, err) =>
                 err.clone(),
             SError(err) =>
                 err.clone()
