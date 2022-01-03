@@ -1,3 +1,9 @@
+/*
+ * This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+ */
+
 use std::path::Path;
 use std::process::exit;
 use std::sync::{Arc, mpsc, Mutex};
@@ -409,7 +415,7 @@ fn init_logging(main_state: Arc<Mutex<MainState>>, settings_folder_path: &Path) 
 
     if let Err(err) = CombinedLogger::init(
         vec![
-            TermLogger::new(LevelFilter::Warn, log_config.clone(), TerminalMode::Mixed, ColorChoice::Auto),
+            TermLogger::new(LevelFilter::Info, log_config.clone(), TerminalMode::Mixed, ColorChoice::Auto),
             WriteLogger::new(LevelFilter::Debug, log_config, rotating_log_writer)
         ],
     ) {

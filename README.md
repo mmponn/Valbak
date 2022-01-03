@@ -11,17 +11,33 @@ Valbak is a work in progress, but it already works well enough to fulfill its in
 Valheim is a challenging open world game where it is not uncommon for players to spend dozens of hours or more
 building and customizing their individual game worlds and characters.
 
-Thus any circumstance that results in the loss of a saved game file can be devastating.
+Thus any circumstance that results in the loss of a saved game file can be emotionally devastating.
 
-One such circumstance is, when used in conjunction with Steam Cloud, Valheim can occasionally lose many hours of saved
-game play.
+One such circumstance is, when used in conjunction with Steam Cloud Sync, Valheim can occasionally lose many hours of
+saved game play.
 
-After losing dozens of hours of saved game files several times, the author of Valbak felt that in order to continue
-playing Valheim, a solution to this problem must be invented.
+After, on several occasions, losing dozens of hours of saved game files, the author of Valbak felt that in order to
+continue playing Valheim, a solution to this problem must be created.
 
-Could another backup solution have worked without requiring the authoring of Valbak? Probably yes, however, at the time,
-the problem seemed to present a convenient opportunity for learning and gaining firsthand experience developing software
-using the [Rust programming language](https://www.rust-lang.org/) in a medium-small sized project.
+Could another existing backup solution have worked without requiring the creation of Valbak? Probably yes, however at
+the time the problem seemed to present a convenient opportunity to learn and gain firsthand experience developing
+software using the [Rust programming language](https://www.rust-lang.org/) in a medium-small sized project.
+
+## Installation
+
+Find and download the latest stable [release](https://github.com/mmponn/valbak/releases). There is no installer, and so
+the executable can be launched from any directory.
+
+## Uninstall
+
+To delete Valbak, simply delete the Valbak executable.
+
+Valbak stores copies of game files to a directory specified by the user. The suggested default is a `Valbak` directory
+in the user's `Documents` directory.
+
+Valbak also stores configuration and logging files in `%APPDATA%\valbak`.
+
+No other files or registry entries are touched.
 
 ## Architecture
 
@@ -34,6 +50,14 @@ out-of-the-box [File Chooser widget](https://www.fltk.org/doc-1.3/classFl__File_
 
 This project is licensed under the [Mozilla Public License Version 2 with support for Secondary Licenses (e.g. GPL,
 LGPL)](LICENSE).
+
+Although the MPL license is not as common as the MIT or Apache licenses it is an important open source license that, in
+a nutshell, permits this source code to be freely used in other projects. The biggest differentiator when compared to
+other licenses is that the MPL uses a "file-level" copyleft/copyright that encourages contributors to share their
+modifications to this project's files, while still allowing them to combine this project with code under other licenses
+(open or proprietary) with minimal restrictions. For a better overview, refer to the
+[MPL FAQ](https://www.mozilla.org/en-US/MPL/2.0/FAQ/). Regardless of this overview or the MPL FAQ, in all cases, this
+project's actual license takes precedence.
 
 ## Contribution
 
