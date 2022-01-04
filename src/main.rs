@@ -46,6 +46,9 @@ pub enum UiMessage {
     MenuQuit,
     MenuDocumentation,
     MenuAbout,
+    SettingsBackupNewPattern,
+    SettingsBackupEditPattern,
+    SettingsBackupDeletePattern,
     SettingsBackupDestChoose,
     SettingsOk,
     SettingsQuit,
@@ -158,7 +161,7 @@ fn main() {
             state.settings = Some(settings.clone());
             let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
             settings_win.set_settings_to_win(settings);
-            settings_win.wind.show();
+            settings_win.show();
             state.settings_win = Some(settings_win);
             if !warn_msg.is_empty() {
                 message_default(&warn_msg);
@@ -168,9 +171,8 @@ fn main() {
             // A settings file was just created with defaults and needs to be validated and adjusted by the user
             state.settings = Some(settings.clone());
             let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
-            settings_win.set_settings_to_win(settings);
-            settings_win.wind.show();
             state.settings_win = Some(settings_win);
+            settings_win.show(&settings);
         }
         _ =>
             panic!("illegal state")
@@ -218,11 +220,11 @@ fn main() {
                     // non-blocking call
                     stop_backup_thread(&mut state);
                     let mut settings_win = SettingsWindow::new(state.ui_thread_tx.clone());
-                    settings_win.set_settings_to_win(state.settings.as_ref().unwrap().clone());
-                    settings_win.wind.make_modal(true);
-                    // Note: Apparently only the UI thread can show windows
-                    settings_win.wind.show();
                     state.settings_win = Some(settings_win);
+                    // settings_win.set_settings_to_win(state.settings.as_ref().unwrap().clone());
+                    // settings_win.win.make_modal(true);
+                    // Note: Apparently only the UI thread can show windows
+                    settings_win.show(&settings);
                 }
                 MenuDocumentation => {
                     todo!();
@@ -230,12 +232,12 @@ fn main() {
                 MenuAbout => {
                     todo!();
                 }
-                SettingsBackupDestChoose => {
+                SettingsBackupNewPattern
+                | SettingsBackupEditPattern
+                | SettingsBackupDeletePattern
+                | SettingsBackupDestChoose => {
                     assert!(state.settings_win.is_some(), "illegal state");
-                    assert!(state.settings.is_some(), "illegal state");
-                    let settings = state.settings.as_ref().unwrap().clone();
-                    // Shows a file chooser window/dialog and blocks
-                    state.settings_win.as_mut().unwrap().choose_backup_dest_dir(settings);
+                    state.settings_win.as_mut().unwrap().on_ui_message(&mut state, &ui_msg);
                 }
                 SettingsOk => {
                     assert!(state.settings_win.is_some(), "illegal state");
@@ -249,8 +251,6 @@ fn main() {
                                             fatal_error(main_state.clone(), err.to_string());
                                         }
                                         Ok(settings) => {
-                                            state.settings_win.as_mut().unwrap().wind.hide();
-                                            state.settings_win = None;
                                             start_backup_thread(&mut state);
                                             if let Err(err) = backup_all_changed_files(settings.clone()) {
                                                 handle_file_error(main_state.clone(), &err);
@@ -259,6 +259,9 @@ fn main() {
                                                 handle_file_error(main_state.clone(), &err);
                                             }
                                             internal_message_queue.push(UiMessage::RefreshFilesLists);
+
+                                            state.settings_win.as_mut().unwrap().on_ui_message(&mut state, &ui_msg);
+                                            state.settings_win = None;
                                         }
                                     }
                                 }
@@ -292,6 +295,13 @@ fn main() {
                         }
                     };
                 }
+                SettingsQuit => {
+                    quitting = true;
+                    assert!(state.settings_win.is_some(), "illegal state");
+                    state.settings_win.as_mut().unwrap().on_ui_message(&mut state, &ui_msg);
+                    state.settings_win = None;
+                    start_graceful_quit(main_state.clone(), 0);
+                }
                 Alert(alert_msg) => {
                     alert_default(&alert_msg);
                 }
@@ -299,8 +309,7 @@ fn main() {
                     fatal_error(main_state.clone(), alert_msg);
                 }
                 AppQuit
-                | MenuQuit
-                | SettingsQuit => {
+                | MenuQuit => {
                     quitting = true;
                     start_graceful_quit(main_state.clone(), 0);
                 }

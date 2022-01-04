@@ -19,11 +19,11 @@ use fltk::prelude::{BrowserExt, GroupExt, InputExt, WidgetExt, WindowExt};
 use fltk::window::Window;
 use thiserror::Error;
 
-use UiMessage::SettingsBackupDestChoose;
+use UiMessage::{SettingsBackupDeletePattern, SettingsBackupDestChoose, SettingsBackupEditPattern, SettingsBackupNewPattern};
 
 use crate::file::PathExt;
 use crate::settings::{BackupFilePattern, Settings, SETTINGS_VERSION};
-use crate::UiMessage;
+use crate::{MainState, UiMessage};
 use crate::UiMessage::{SettingsOk, SettingsQuit};
 use crate::win_common::{column_headers, make_list_browser, make_section_header};
 
@@ -40,7 +40,8 @@ impl Display for SettingsWinError {
 }
 
 pub struct SettingsWindow {
-    pub wind: Window,
+    win: Window,
+    backup_pattern_win: Option<Window>,
     backup_files_browser: MultiBrowser,
     backup_dest_input: Input,
     backup_count_input: Input,
@@ -53,9 +54,9 @@ impl SettingsWindow {
         static WINDOW_SIZE: (i32, i32) = (800, 440);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
-        let mut wind = Window::default().with_label("Settings");
-        wind.make_modal(true);
-        wind.set_size(WINDOW_SIZE.0, WINDOW_SIZE.1);
+        let mut settings_win = Window::default().with_label("Settings");
+        settings_win.make_modal(true);
+        settings_win.set_size(WINDOW_SIZE.0, WINDOW_SIZE.1);
 
         let mut content = Pack::default()
             .with_pos(10, 10);
@@ -77,14 +78,17 @@ impl SettingsWindow {
             .with_label("New");
         let text_size = new_backup_button.measure_label();
         new_backup_button.set_size(text_size.0 + 15, text_size.1 + 10);
+        new_backup_button.emit(sender.clone(), SettingsBackupNewPattern);
         let mut edit_backup_button = Button::default()
             .with_label("Edit");
         let text_size = edit_backup_button.measure_label();
         edit_backup_button.set_size(text_size.0 + 15, text_size.1 + 10);
+        edit_backup_button.emit(sender.clone(), SettingsBackupEditPattern);
         let mut delete_backup_button = Button::default()
             .with_label("Delete");
         let text_size = delete_backup_button.measure_label();
         delete_backup_button.set_size(text_size.0 + 15, text_size.1 + 10);
+        delete_backup_button.emit(sender.clone(), SettingsBackupDeletePattern);
 
         backup_files_buttons.set_size(0, text_size.1 + 10);
 
@@ -149,21 +153,30 @@ impl SettingsWindow {
         bottom_button_group.add(&ok_button);
         bottom_button_group.add(&quit_button);
 
-        wind.end();
+        settings_win.end();
 
-        wind.set_callback(|_wind| {
+        settings_win.set_callback(|_wind| {
             if app::event() == Event::Close {
                 // Disables Escape key closes window behavior
             }
         });
 
         SettingsWindow {
-            wind,
+            win: settings_win,
+            //TODO Eagerly create the pattern win?
+            backup_pattern_win: None,
             backup_files_browser,
             backup_dest_input,
             backup_count_input,
             backup_delay_input
         }
+    }
+
+    // Called by UI thread
+    pub fn show(&mut self, settings: &Settings) {
+        self.set_settings_to_win(settings);
+        self.win.make_modal(true);
+        self.win.show();
     }
 
     pub fn get_settings_from_win(&self) -> Result<Settings, SettingsWinError> {
@@ -211,7 +224,29 @@ impl SettingsWindow {
         })
     }
 
-    pub fn set_settings_to_win(&mut self, settings: Settings) {
+    /// Called by UI thread for `ui_message` related to Settings
+    pub fn on_ui_message(&mut self, state: &mut MainState, ui_message: &UiMessage) {
+        match ui_message {
+            SettingsBackupNewPattern => {
+                state.backup_pattern_win = self.new_backup_pattern_win();
+            }
+            SettingsBackupEditPattern => {}
+            SettingsBackupDeletePattern => {}
+            SettingsBackupDestChoose => {
+                assert!(state.settings.is_some(), "illegal state");
+                let settings = state.settings.as_ref().unwrap().clone();
+                // Shows a file chooser window/dialog and blocks
+                self.choose_backup_dest_dir(settings);
+            }
+            SettingsOk
+            | SettingsQuit => {
+                self.win.hide();
+            }
+            _ => panic!("illegal state")
+        }
+    }
+
+    pub fn set_settings_to_win(&mut self, settings: &Settings) {
         self.clear_win();
         for backup_pattern in settings.backup_patterns {
             let backup_file_line = format!("{}|{}",
