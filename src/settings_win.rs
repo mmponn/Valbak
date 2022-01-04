@@ -12,6 +12,7 @@ use fltk::browser::MultiBrowser;
 use fltk::button::Button;
 use fltk::dialog::{FileChooser, FileChooserType};
 use fltk::enums::Event;
+use fltk::frame::Frame;
 use fltk::group::{Group, Pack, PackType};
 use fltk::input::Input;
 use fltk::prelude::{BrowserExt, GroupExt, InputExt, WidgetExt, WindowExt};
@@ -49,7 +50,7 @@ pub struct SettingsWindow {
 impl SettingsWindow {
 
     pub fn new(sender: app::Sender<UiMessage>) -> SettingsWindow {
-        static WINDOW_SIZE: (i32, i32) = (800, 420);
+        static WINDOW_SIZE: (i32, i32) = (800, 440);
         static CONTENT_SIZE: (i32, i32) = (WINDOW_SIZE.0 - 20, WINDOW_SIZE.1 - 20);
 
         let mut wind = Window::default().with_label("Settings");
@@ -122,6 +123,9 @@ impl SettingsWindow {
         backup_delay_input.set_size(0, backup_delay_input.text_size() + 12);
 
         content.set_size(CONTENT_SIZE.0, backup_delay_input.y() + backup_delay_input.height());
+
+        let mut bottom_button_group_pad = Frame::default();
+        bottom_button_group_pad.set_size(0, 10);
 
         let mut bottom_button_group = Group::default();
 

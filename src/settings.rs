@@ -184,7 +184,7 @@ pub fn get_settings_file_path() -> Result<PathBuf, SettingsError> {
         Some(project_dirs) => {
             let settings_dir_path = project_dirs.config_dir();
             let settings_file_path = settings_dir_path.join(Path::new("settings.json"));
-            info!("Using settings file: {:?}", settings_file_path);
+            info!("Using settings file: {}", settings_file_path.str());
             Ok(settings_file_path)
         }
     }

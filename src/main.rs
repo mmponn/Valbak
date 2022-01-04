@@ -4,21 +4,23 @@
  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
  */
 
+use std::cell::RefCell;
+use std::ops::Deref;
 use std::path::Path;
 use std::process::exit;
-use std::sync::{Arc, mpsc, Mutex};
+use std::sync::{Arc, mpsc};
 use std::thread::JoinHandle;
 
-use anyhow::Error;
 use file_rotate::{ContentLimit, FileRotate, suffix::CountSuffix};
 use file_rotate::compression::Compression;
 use fltk::app;
 use fltk::dialog::{alert_default, choice_default, message_default};
 use fltk::prelude::{WidgetExt, WindowExt};
 use log::*;
+use parking_lot::ReentrantMutex;
 use simplelog::{ColorChoice, CombinedLogger, ConfigBuilder, LevelFilter, TerminalMode, TermLogger, WriteLogger};
 
-use FileError::{FError, FWarning};
+use FileError::{FError, FFatal, FWarning};
 use main_win::MainWindow;
 use settings_win::SettingsWindow;
 use SettingsError::{SError, SNotFound, SWarning};
@@ -116,7 +118,7 @@ fn main() {
 
     let (ui_thread_tx, ui_thread_rx) = app::channel::<UiMessage>();
 
-    let main_state = Arc::new(Mutex::new(
+    let main_state = Arc::new(ReentrantMutex::new(RefCell::new(
         MainState {
             main_win: MainWindow::new(ui_thread_tx.clone()),
             settings_win: None,
@@ -125,7 +127,7 @@ fn main() {
             backup_thread_tx: None,
             backup_thread_rx: None,
             ui_thread_tx: ui_thread_tx.clone(),
-        }));
+        })));
 
     let settings_file_path = match get_settings_file_path() {
         Ok(path) => path,
@@ -136,7 +138,8 @@ fn main() {
 
     init_logging(main_state.clone(), settings_folder_path);
 
-    let mut state = main_state.lock().unwrap();
+    let state_guard = main_state.lock();
+    let mut state = state_guard.deref().borrow_mut();
 
     state.main_win.wind.show();
 
@@ -148,7 +151,6 @@ fn main() {
         }
         Err(SError(err_msg)) => {
             // Settings could not be loaded
-            drop(state);
             fatal_error(main_state.clone(), err_msg);
         }
         Err(SWarning(settings, warn_msg)) => {
@@ -178,8 +180,9 @@ fn main() {
         ui_thread_tx.send(UiMessage::RefreshFilesLists);
     }
 
-    // Release the lock
+    // Release the mutex so other threads can access main state
     drop(state);
+    drop(state_guard);
 
     // Apparently sending UI messages from the main UI loop is unreliable
     let mut internal_message_queue = Vec::new();
@@ -207,9 +210,10 @@ fn main() {
                 }
                 info!("Quitting - and allowing message {}", ui_msg.to_string());
             }
+            let state_guard = main_state.lock();
+            let mut state = state_guard.deref().borrow_mut();
             match ui_msg {
                 MenuSettings => {
-                    let mut state = main_state.lock().unwrap();
                     assert!(state.settings.is_some(), "illegal state");
                     // non-blocking call
                     stop_backup_thread(&mut state);
@@ -227,7 +231,6 @@ fn main() {
                     todo!();
                 }
                 SettingsBackupDestChoose => {
-                    let mut state = main_state.lock().unwrap();
                     assert!(state.settings_win.is_some(), "illegal state");
                     assert!(state.settings.is_some(), "illegal state");
                     let settings = state.settings.as_ref().unwrap().clone();
@@ -235,7 +238,6 @@ fn main() {
                     state.settings_win.as_mut().unwrap().choose_backup_dest_dir(settings);
                 }
                 SettingsOk => {
-                    let mut state = main_state.lock().unwrap();
                     assert!(state.settings_win.is_some(), "illegal state");
                     match state.settings_win.as_ref().unwrap().get_settings_from_win() {
                         Ok(settings) => {
@@ -244,14 +246,12 @@ fn main() {
                                     state.settings = Some(settings.clone());
                                     match write_settings(settings) {
                                         Err(err) => {
-                                            drop(state);
-                                            fatal_error(main_state, err.to_string());
+                                            fatal_error(main_state.clone(), err.to_string());
                                         }
                                         Ok(settings) => {
                                             state.settings_win.as_mut().unwrap().wind.hide();
                                             state.settings_win = None;
                                             start_backup_thread(&mut state);
-                                            drop(state);
                                             if let Err(err) = backup_all_changed_files(settings.clone()) {
                                                 handle_file_error(main_state.clone(), &err);
                                             };
@@ -271,7 +271,6 @@ fn main() {
                                             }
                                         }
                                         SError(err_msg) => {
-                                            drop(state);
                                             fatal_error(main_state.clone(), err_msg);
                                         }
                                         _ =>
@@ -287,7 +286,6 @@ fn main() {
                                     alert_default(&err_msg);
                                 }
                                 SettingsWinError::SwError(err_msg) => {
-                                    drop(state);
                                     fatal_error(main_state.clone(), err_msg);
                                 }
                             }
@@ -307,20 +305,17 @@ fn main() {
                     start_graceful_quit(main_state.clone(), 0);
                 }
                 RestoreBackup => {
-                    let state = main_state.lock().unwrap();
                     let selected_backup_paths = state.main_win.get_selected_backed_up_paths();
                     if !selected_backup_paths.is_empty() {
                         //TODO show confirmation dialog
                         assert!(state.settings.is_some(), "illegal state");
                         if let Err(err) = restore_backed_up_files(state.settings.as_ref().unwrap().clone(), selected_backup_paths) {
-                            drop(state);
                             handle_file_error(main_state.clone(), &err);
                         }
                     }
                     internal_message_queue.push(UiMessage::RefreshFilesLists);
                 }
                 DeleteBackup => {
-                    let state = main_state.lock().unwrap();
                     let selected_backup_paths = state.main_win.get_selected_backed_up_paths();
                     if !selected_backup_paths.is_empty() {
                         match choice_default(
@@ -329,7 +324,6 @@ fn main() {
                         ) {
                             0 => {  // Yes
                                 if let Err(err) = delete_backed_up_files(selected_backup_paths) {
-                                    drop(state);
                                     handle_file_error(main_state.clone(), &err);
                                 }
                             }
@@ -340,48 +334,44 @@ fn main() {
                 }
                 PushStatus(status) => {
                     debug!("Pushing status message to: {}", &status);
-                    let mut state = main_state.lock().unwrap();
                     state.main_win.push_status(status);
                 }
                 PopStatus => {
                     debug!("Popping status message");
-                    let mut state = main_state.lock().unwrap();
                     state.main_win.pop_status();
                 }
                 SetStatus(status) => {
                     debug!("Setting status message to: {}", &status);
-                    let mut state = main_state.lock().unwrap();
                     state.main_win.set_status(status);
                 },
                 RefreshFilesLists => {
-                    let mut state = main_state.lock().unwrap();
                     match get_live_files(state.settings.as_ref().unwrap().clone()) {
                         Ok(live_files) => {
                             state.main_win.set_live_files_to_win(live_files);
                             match get_backed_up_files(state.settings.as_ref().unwrap().clone()) {
                                 Ok(backed_up_files) => {
-                                    state.main_win.set_backed_up_files_to_win(backed_up_files);
+                                    if let Err(err) = state.main_win.set_backed_up_files_to_win(backed_up_files) {
+                                        handle_file_error(main_state.clone(), &err);
+                                    }
                                 }
                                 Err(err) => {
-                                    drop(state);
                                     handle_file_error(main_state.clone(), &err);
                                 }
                             }
                         },
                         Err(err) => {
-                            drop(state);
                             handle_file_error(main_state.clone(), &err);
                         }
                     }
                 }
             }
+            drop(state);
+            drop(state_guard);
         }
     }
 }
 
-fn handle_file_error(main_state: Arc<Mutex<MainState>>, file_err: &Error) {
-    let file_err = file_err.downcast_ref::<FileError>()
-        .unwrap_or_else(|| fatal_error(main_state.clone(), file_err.to_string()));
+fn handle_file_error(main_state: Arc<ReentrantMutex<RefCell<MainState>>>, file_err: &FileError) {
     let summarize_errs = |errs: &Vec<String>| {
         let mut alert_err = errs.join("\n");
         if alert_err.len() > 100 {
@@ -392,16 +382,19 @@ fn handle_file_error(main_state: Arc<Mutex<MainState>>, file_err: &Error) {
     match file_err {
         FWarning(errs) => {
             errs.iter().for_each(|err_msg| warn!("{}", err_msg));
-            alert_default(&summarize_errs(errs));
         }
         FError(errs) => {
+            errs.iter().for_each(|err_msg| error!("{}", err_msg));
+            alert_default(&summarize_errs(errs));
+        }
+        FFatal(errs) => {
             errs.iter().for_each(|err_msg| error!("{}", err_msg));
             fatal_error(main_state.clone(), summarize_errs(errs));
         }
     }
 }
 
-fn init_logging(main_state: Arc<Mutex<MainState>>, settings_folder_path: &Path) {
+fn init_logging(main_state: Arc<ReentrantMutex<RefCell<MainState>>>, settings_folder_path: &Path) {
     let log_file_path = settings_folder_path.join("valbak.log");
     let log_file_path = log_file_path.str();
 
@@ -423,7 +416,7 @@ fn init_logging(main_state: Arc<Mutex<MainState>>, settings_folder_path: &Path) 
     }
 }
 
-fn fatal_error(main_state: Arc<Mutex<MainState>>, err_msg: String) -> ! {
+fn fatal_error(main_state: Arc<ReentrantMutex<RefCell<MainState>>>, err_msg: String) -> ! {
     let err_msg = err_msg + "\nFatal error - Valbak must close";
     if log::logger().enabled(&Metadata::builder().level(Level::Error).build()) {
         error!("{}", err_msg);
@@ -440,17 +433,17 @@ fn fatal_error(main_state: Arc<Mutex<MainState>>, err_msg: String) -> ! {
     exit(1);
 }
 
-fn start_graceful_quit(main_state: Arc<Mutex<MainState>>, exit_code: i32) -> JoinHandle<()> {
+fn start_graceful_quit(main_state: Arc<ReentrantMutex<RefCell<MainState>>>, exit_code: i32) -> JoinHandle<()> {
     std::thread::spawn(move || {
-        let mut state = match main_state.try_lock() {
-            Ok(lock) =>
-                lock,
-            Err(_) =>
-                panic!("illegal state - main state lock not released")
+        let state_guard = match main_state.try_lock() {
+            Some(guard) => guard,
+            None => panic!("illegal state - main state lock not released")
         };
+        let mut state = state_guard.deref().borrow_mut();
         if state.backup_thread.is_some() {
             let backup_thread = stop_backup_thread(&mut state);
             drop(state);
+            drop(state_guard);
             if let Err(err) = backup_thread.join() {
                 error!("Panic from backup thread: {:?}", err);
             }

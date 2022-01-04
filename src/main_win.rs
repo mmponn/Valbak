@@ -7,14 +7,17 @@
 use std::cmp::Ordering;
 use std::path::PathBuf;
 
+use anyhow::Result;
 use chrono::{DateTime, Local};
 use fltk::{app::*, app, browser::*, button::*, enums::*, group::*, prelude::*, window::*};
 use fltk::frame::Frame;
 use fltk::menu::{MenuBar, MenuFlag};
 use log::error;
 
-use crate::{UiMessage, win_common};
-use crate::file::{get_backed_up_filename, get_backed_up_version_number, PathExt};
+use FileError::{FError, FFatal};
+
+use crate::{FileError, FWarning, UiMessage, win_common};
+use crate::file::{get_backed_up_path, get_backed_up_version_number, get_file_metadata, PathExt};
 use crate::UiMessage::{AppQuit, MenuAbout, MenuDocumentation, MenuQuit, MenuSettings};
 
 pub struct MainWindow {
@@ -179,52 +182,97 @@ impl MainWindow {
         }
     }
 
-    pub fn set_backed_up_files_to_win(&mut self, mut backed_up_files: Vec<PathBuf>) {
+    pub fn set_backed_up_files_to_win(&mut self, mut backed_up_files: Vec<PathBuf>) -> Result<(), FileError> {
+        let mut errors = vec![];
+
         // Sort the backed up files so they are ready to be displayed to the user
         backed_up_files.sort_by(|a, b| {
+            let (_a_metadata, a_modified) = match get_file_metadata(a) {
+                Ok(metadata) => metadata,
+                Err(err) => {
+                    match err {
+                        FWarning(mut errs)
+                        | FError(mut errs)
+                        | FFatal(mut errs) =>
+                            errs.drain(..).for_each(|err_msg| errors.push(err_msg))
+                    }
+                    return Ordering::Equal;
+                }
+            };
+            let (_b_metadata, b_modified) = match get_file_metadata(b) {
+                Ok(metadata) => metadata,
+                Err(err) => {
+                    match err {
+                        FWarning(mut errs)
+                        | FError(mut errs)
+                        | FFatal(mut errs) =>
+                            errs.drain(..).for_each(|err_msg| errors.push(err_msg))
+                    }
+                    return Ordering::Equal;
+                }
+            };
+
+            // Reverse datetime sort
+            match b_modified.cmp(&a_modified) {
+                Ordering::Less =>
+                    return Ordering::Less,
+                Ordering::Greater =>
+                    return Ordering::Greater,
+                _ => {}
+            }
+
+            let filename_a = match get_backed_up_path(a) {
+                Some(name) => name,
+                None => {
+                    errors.push(format!("Invalid backup file name {}", b.str()));
+                    return Ordering::Equal;
+                }
+            };
+            let filename_b = match get_backed_up_path(b) {
+                Some(name) => name,
+                None => {
+                    errors.push(format!("Invalid backup file name {}", b.str()));
+                    return Ordering::Equal;
+                }
+            };
+
+            // Forward filename ordering
+            match filename_a.cmp(filename_b) {
+                Ordering::Less =>
+                    return Ordering::Less,
+                Ordering::Greater =>
+                    return Ordering::Greater,
+                _ => {}
+            }
+
             let backup_number_a = match get_backed_up_version_number(a) {
                 Some(n) => n,
                 None => {
-                    error!("Invalid backup file name {}", b.str());
+                    errors.push(format!("Invalid backup file name {}", a.str()));
                     return Ordering::Equal;
                 }
             };
             let backup_number_b = match get_backed_up_version_number(b) {
                 Some(n) => n,
                 None => {
-                    error!("Invalid backup file name {}", b.str());
+                    errors.push(format!("Invalid backup file name {}", b.str()));
                     return Ordering::Equal;
                 }
             };
+
             // Reverse number ordering
-            match backup_number_b.cmp(&backup_number_a) {
-                Ordering::Less => Ordering::Less,
-                Ordering::Greater => Ordering::Greater,
-                Ordering::Equal => {
-                    let filename_a = match get_backed_up_filename(a) {
-                        Some(n) => n,
-                        None => {
-                            error!("Invalid backup file name {}", b.str());
-                            return Ordering::Equal;
-                        }
-                    };
-                    let filename_b = match get_backed_up_filename(b) {
-                        Some(n) => n,
-                        None => {
-                            error!("Invalid backup file name {}", b.str());
-                            return Ordering::Equal;
-                        }
-                    };
-                    // Forward filename ordering
-                    filename_a.cmp(filename_b)
-                }
-            }
+            backup_number_b.cmp(&backup_number_a)
         });
+
+        if !errors.is_empty() {
+            return Err(FWarning(errors));
+        }
+
         self.backed_up_files.clear();
         for backed_up_file in backed_up_files {
             let backed_up_file_metadata = match backed_up_file.metadata() {
                 Err(err) => {
-                    error!("Error reading file metadata for {}: {}", backed_up_file.str(), err);
+                    errors.push(format!("Error reading file metadata for {}: {}", backed_up_file.str(), err));
                     continue;
                 }
                 Ok(metadata) =>
@@ -232,7 +280,7 @@ impl MainWindow {
             };
             let backed_up_file_modified = match backed_up_file_metadata.modified() {
                 Err(err) => {
-                    error!("Error reading file modified time for {}: {}", backed_up_file.str(), err);
+                    errors.push(format!("Error reading file modified time for {}: {}", backed_up_file.str(), err));
                     continue;
                 }
                 Ok(modified) =>
@@ -253,6 +301,11 @@ impl MainWindow {
             );
             self.backed_up_files.add(&backed_up_file_line);
         }
+
+        if !errors.is_empty() {
+            return Err(FWarning(errors));
+        }
+        Ok(())
     }
 
     pub fn get_selected_backed_up_paths(&self) -> Vec<PathBuf> {

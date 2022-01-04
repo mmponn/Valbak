@@ -12,14 +12,14 @@ use std::time::Duration;
 
 use anyhow::Error;
 use fltk::app;
-use log::{debug, error};
+use log::{debug, error, warn};
 use notify::{DebouncedEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use thiserror::Error;
 
-use FileError::{FError, FWarning};
+use FileError::{FError, FFatal, FWarning};
 
 use crate::{FileError, MainState, UiMessage};
-use crate::file::{back_up_live_file, delete_old_backups, live_file_has_backup, PathExt};
+use crate::file::{backup_live_file, delete_old_backups, live_file_has_backup, PathExt};
 use crate::settings::Settings;
 
 const STOP_WATCHER_ERROR: &str = "STOP";
@@ -208,16 +208,16 @@ fn on_file_change( backup_file_path: PathBuf, settings: &Settings, ui_thread_tx:
     let file_has_backup = match live_file_has_backup(settings.clone(), backup_file_path.clone()) {
         Ok(has_backup) => has_backup,
         Err(err) => {
-            handle_error(&ui_thread_tx, &err);
+            handle_error(&ui_thread_tx, &err.into());
             return;
         }
     };
     if !file_has_backup {
-        if let Err(err) = back_up_live_file(settings.clone(), backup_file_path.clone()) {
-            handle_error(&ui_thread_tx, &err);
+        if let Err(err) = backup_live_file(settings.clone(), backup_file_path.clone()) {
+            handle_error(&ui_thread_tx, &err.into());
         }
         if let Err(err) = delete_old_backups(settings.clone()) {
-            handle_error(&ui_thread_tx, &err);
+            handle_error(&ui_thread_tx, &err.into());
         }
         ui_thread_tx.send(UiMessage::RefreshFilesLists);
     }
@@ -227,9 +227,12 @@ fn handle_error(ui_thread_tx: &app::Sender<UiMessage>, err: &Error) {
     if let Some(file_err) = err.downcast_ref::<FileError>() {
         match file_err {
             FWarning(errs) => {
-                errs.iter().for_each(|err_msg| ui_thread_tx.send(UiMessage::Alert(err_msg.clone())));
+                errs.iter().for_each(|err_msg| warn!("{}", err_msg))
             }
             FError(errs) => {
+                errs.iter().for_each(|err_msg| ui_thread_tx.send(UiMessage::Alert(err_msg.clone())));
+            }
+            FFatal(errs) => {
                 errs.iter().for_each(|err_msg| ui_thread_tx.send(UiMessage::AlertQuit(err_msg.clone())));
             }
         }

@@ -46,7 +46,7 @@ pub fn column_headers(column_header_texts: &Vec<&str>, column_header_widths: &'s
         adjusted_header_text.push_str(header_text);
 
         let mut label_frame = Frame::default()
-            .with_label(&*adjusted_header_text);
+            .with_label(&adjusted_header_text);
         label_frame.set_label_size(12);
         let text_size = label_frame.measure_label();
         label_frame.set_size(text_size.0, text_size.1);
